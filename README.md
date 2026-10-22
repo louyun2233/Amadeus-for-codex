@@ -168,13 +168,20 @@ Codex 守候程序在新一轮连携打开面板时，或用户双击 `Amadeus.e
 ## 免责声明
 
 代码使用 [MIT 许可证](LICENSE)。角色、模型、音色版权归原权利方，素材按需下载，禁止商用。见 `NOTICE`。
+
 资源来自网络，仅供学习交流，如有侵权请联系删除。
+
 本项目为个人学习项目，非商业用途
+
 Live2D 模型、音频等资源版权归原作者所有
+
 使用本项目产生的任何问题，作者不承担责任
+
 如有版权问题，请联系删除相关内容
 
 ## 致谢
-红莉栖 Live2D 模型资源来自开源社区
-感谢 `Lx1228/Amadeus2026 ` `FuRongJun-1999/lingshu` `yyxcnasd/amadeus-for-dsh` `sola1039/HAST-SEC`项目的参考
-感谢所有开源贡献者
+红莉栖 Live2D 模型资源来自开源社区。
+
+感谢如下项目的参考： `Lx1228/Amadeus2026` `FuRongJun-1999/lingshu` `yyxcnasd/amadeus-for-dsh` `sola1039/HAST-SEC`
+
+感谢所有开源社区贡献者
