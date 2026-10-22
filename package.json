@@ -1,0 +1,38 @@
+{
+  "name": "amadeus-codex",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Amadeus (Makise Kurisu) companion for Codex Desktop: Live2D panel + voice + memory",
+  "type": "module",
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "bin": {
+    "amadeus": "./bin/amadeus.mjs"
+  },
+  "scripts": {
+    "start": "node bin/amadeus.mjs start",
+    "stop": "node bin/amadeus.mjs stop",
+    "status": "node bin/amadeus.mjs status",
+    "doctor": "node bin/amadeus.mjs doctor",
+    "open": "node bin/amadeus.mjs open",
+    "mcp": "node bin/amadeus-mcp.mjs",
+    "test": "node --test \"tests/**/*.test.mjs\"",
+    "check": "node scripts/check.mjs",
+    "verify:api": "node scripts/verify-panel.mjs",
+    "verify:ui": "node scripts/ui/verify-ui.mjs",
+    "verify:call": "node scripts/ui/verify-call.mjs",
+    "verify:speech": "node scripts/ui/verify-speech.mjs",
+    "verify:portable": "node scripts/portable-scan.mjs",
+    "character:check": "node scripts/character-source.mjs",
+    "character:apply": "node scripts/character-source.mjs --apply",
+    "verify:tabs": "node scripts/ui/verify-isolated-tabs.mjs",
+    "verify:tabs:isolated": "node scripts/ui/verify-isolated-tabs.mjs",
+    "verify:tabs:live": "node scripts/ui/verify-two-tabs.mjs",
+    "dist": "node scripts/make-dist.mjs"
+  },
+  "devDependencies": {
+    "playwright-core": "^1.64.0"
+  },
+  "license": "MIT"
+}

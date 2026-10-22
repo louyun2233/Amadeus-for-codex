@@ -1,0 +1,66 @@
+Amadeus for Codex
+=================
+
+Third-party and upstream attribution
+------------------------------------
+
+This project is a reimplementation for Codex Desktop. Parts of its design and
+some tool logic are derived from:
+
+  1. amadeus-for-dsh — https://github.com/yyxcnasd/amadeus-for-dsh
+     MIT License, Copyright (c) 2025 yyxcnasd
+     Reused: Edge TTS emotion/prosody profiles, word-boundary timing approach,
+     Live2D lip-sync and idle-animation approach, emotion-to-expression map,
+     asset download source.
+
+  2. Amadeus2026 — https://github.com/Lx1228/Amadeus2026
+     MIT License, Copyright (c) Lx1228
+     Design reference only (architecture and interaction design). No source
+     code is copied from this project.
+
+  3. lingshu (灵枢) — https://github.com/FuRongJun-1999/lingshu
+     MIT License, Copyright (c) 2026 FuRongJun-1999
+     Ported (with simplification): the contradiction-detection mechanism in
+     src/core/contradiction.mjs — near-duplicate gating plus polarity / number /
+     antonym diffing, including the non-negating-word exemption list. The test
+     scenarios in tests/memory-supersede.test.mjs are adapted from that
+     project's bench/repro (bench_correction.py, bench_supersede.py).
+
+  4. HAST-SEC — https://github.com/sola1039/HAST-SEC
+     Non-commercial study/research licence. NO CODE IS USED OR COPIED from this
+     project. Only two UX ideas were adopted: a single `npm run check`
+     pre-flight command, and a one-line command for importing your own
+     character file.
+
+Bundled libraries (MIT, redistributed with this project)
+--------------------------------------------------------
+
+  - pixi.js 7.4.2 — https://github.com/pixijs/pixijs
+    MIT License, Copyright (c) 2013-2023 Mathew Groves, Chad Engler
+    See src/panel/vendor/LICENSE.pixi.txt
+
+  - pixi-live2d-display 0.4.0 (cubism2 build) — https://github.com/guansss/pixi-live2d-display
+    MIT License, Copyright (c) 2020 Guan
+    See src/panel/vendor/LICENSE.pixi-live2d-display.txt
+
+Not bundled (downloaded on demand into the user's own cache)
+------------------------------------------------------------
+
+  - live2d.min.js — the Live2D Cubism 2 web runtime. Copyright Live2D Inc.
+    It is not distributed with this project. The user either lets the tool
+    fetch it from a registered source (verified by SHA-256) or supplies the
+    file locally.
+
+Character and asset rights
+--------------------------
+
+Makise Kurisu, Steins;Gate and all related characters, names, voices and
+dialogue are the property of MAGES. / Nitroplus and their respective rights
+holders.
+
+Live2D models, Cubism Core runtime files and voice samples are NOT distributed
+with this project. They are downloaded on demand into the user's own data
+directory and are intended for personal, non-commercial study only.
+
+This project is not affiliated with OpenAI, MAGES., Nitroplus, or any of the
+upstream repositories listed above.

@@ -1,0 +1,14 @@
+# Register the Amadeus MCP server with Codex.
+#
+# Append this to %USERPROFILE%\.codex\config.toml (or run scripts/install.ps1,
+# which does it idempotently and keeps a backup).
+
+[mcp_servers.amadeus]
+command = "node"
+args = ['C:\path\to\amadeus-codex\bin\amadeus-mcp.mjs']
+startup_timeout_sec = 30
+
+# Optional: forward Codex turn/task events to the companion so it can announce
+# real task completion (never used as a substitute for a goal-completed signal).
+#
+# notify = ["node", 'C:\path\to\amadeus-codex\bin\amadeus-notify.mjs', "turn-ended"]

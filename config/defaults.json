@@ -1,0 +1,61 @@
+{
+  "character": "kurisu",
+  "panel": {
+    "theme": "amadeus-dark",
+    "openOnStart": true,
+    "onboardingSeen": false
+  },
+  "chat": {
+    "provider": "codex-exec",
+    "model": "",
+    "oneshot": true,
+    "maxTurnsKept": 20,
+    "compressThreshold": 40,
+    "keepRecent": 20
+  },
+  "voice": {
+    "enabled": false,
+    "provider": "dashscope",
+    "name": "Cherry",
+    "dashscopeModel": "qwen3-tts-flash",
+    "localModel": "Qwen/Qwen3-TTS-12Hz-0.6B-Base",
+    "rate": "+0%",
+    "pitch": "+0Hz",
+    "emotionIntensity": 1.0,
+    "sfxVolume": 0.5,
+    "ringEnabled": true,
+    "ringVolume": 0.7,
+    "motionSfx": false,
+    "stability": true
+  },
+  "speechInput": {
+    "provider": "browser",
+    "lang": "zh-CN",
+    "apiModel": "whisper-1"
+  },
+  "memory": {
+    "enabled": false,
+    "autoExtract": false,
+    "maxPerNamespace": 100
+  },
+  "proactive": {
+    "callEnabled": false,
+    "callIntervalMs": 36000000,
+    "idleEnabled": false,
+    "idleMs": 1200000
+  },
+  "broadcast": {
+    "enabled": false,
+    "onTaskStart": true,
+    "onTaskComplete": true,
+    "onTaskFailed": true,
+    "systemTts": false
+  },
+  "permissions": {
+    "preauthorizeSay": false,
+    "preauthorizeCall": false
+  },
+  "assets": {
+    "autoDownload": true
+  }
+}

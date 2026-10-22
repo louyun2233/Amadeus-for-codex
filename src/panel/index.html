@@ -1,0 +1,135 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AMADEUS</title>
+<link rel="stylesheet" href="/amadeus/panel/panel.css">
+</head>
+<body>
+<div id="phone">
+  <div id="screen">
+    <div id="avatar-wrap">
+      <canvas id="avatar" width="360" height="320" hidden></canvas>
+      <!-- Placeholder gets its own canvas: a canvas that has handed out a 2D
+           context can never hand out a WebGL context, which would silently kill
+           the Live2D renderer. -->
+      <canvas id="avatar-fallback" width="360" height="320"></canvas>
+      <div id="asset-note" class="hidden"></div>
+      <div id="clock">--:--</div>
+      <div id="status-chip" role="status" aria-live="polite"><span class="dot"></span><span id="status-text">连接中…</span></div>
+    </div>
+
+    <div id="call-overlay" class="hidden">
+      <div class="call-name" id="call-name">AMADEUS</div>
+      <div class="call-sub" id="call-sub">来电中…</div>
+      <div class="call-ring-status" id="call-ring-status" role="status" aria-live="polite"></div>
+      <div class="call-btns">
+        <button id="call-accept" class="btn-primary">接听</button>
+        <button id="call-deny" class="btn-ghost">拒接</button>
+      </div>
+    </div>
+  </div>
+
+  <div id="hinge"><span></span><span></span></div>
+
+  <div id="keypad">
+    <div id="tabs" role="tablist">
+      <button class="tab active" data-view="chat" role="tab">对话</button>
+      <button class="tab" data-view="memory" role="tab">记忆</button>
+      <button class="tab" data-view="settings" role="tab">设置</button>
+      <button class="tab" data-view="diag" role="tab">自检</button>
+      <button id="refresh" class="icon-btn" title="刷新状态" aria-label="刷新状态">
+        <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"
+             stroke-linecap="round" stroke-linejoin="round"><path d="M21 12a9 9 0 1 1-2.6-6.4"/><path d="M21 3v6h-6"/></svg>
+      </button>
+    </div>
+
+    <section id="view-chat" class="view active">
+      <div id="history"></div>
+      <div id="chat-row">
+        <button id="mic" class="icon-btn" title="语音输入" aria-label="语音输入">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><rect x="9" y="2" width="6" height="12" rx="3"/>
+            <path d="M5 10v1a7 7 0 0 0 14 0v-1"/><line x1="12" y1="18" x2="12" y2="22"/></svg>
+        </button>
+        <input id="input" type="text" placeholder="和 Amadeus 说话…" aria-label="对话输入" autocomplete="off">
+        <button id="send" class="icon-btn" title="发送" aria-label="发送">
+          <svg viewBox="0 0 24 24" width="15" height="15" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><path d="M22 2 11 13"/><path d="M22 2l-7 20-4-9-9-4 20-7z"/></svg>
+        </button>
+      </div>
+    </section>
+
+    <section id="view-memory" class="view">
+      <div class="section-head">
+        <span>长期记忆</span>
+        <span class="actions">
+          <button id="mem-export" class="icon-btn" title="导出记忆" aria-label="导出记忆">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/>
+              <path d="M7 10l5 5 5-5"/><path d="M12 15V3"/></svg>
+          </button>
+          <button id="mem-clear" class="icon-btn danger" title="清空面板记忆" aria-label="清空面板记忆">
+            <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"
+                 stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4h8v2"/>
+              <path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg>
+          </button>
+        </span>
+      </div>
+      <div id="memory-list" class="list"></div>
+    </section>
+
+    <section id="view-settings" class="view">
+      <div id="settings" class="list"></div>
+    </section>
+
+    <section id="view-diag" class="view">
+      <div class="section-head">
+        <span>能力自检</span>
+        <button id="diag-run" class="icon-btn" title="重新自检（含语音探测）" aria-label="重新自检">
+          <svg viewBox="0 0 24 24" width="14" height="14" fill="none" stroke="currentColor" stroke-width="2"
+               stroke-linecap="round" stroke-linejoin="round"><path d="M22 12h-4l-3 9L9 3l-3 9H2"/></svg>
+        </button>
+      </div>
+      <div id="diag-out" class="list mono"></div>
+    </section>
+  </div>
+</div>
+
+<dialog id="onboarding" class="onboarding" aria-labelledby="guide-title">
+  <section id="guide-intro" class="onboarding-step">
+    <div class="onboarding-kicker">首次使用 · 1 / 2</div>
+    <h1 id="guide-title">先了解数据去向</h1>
+    <p>聊天文字经本机 Codex CLI 交给你配置的模型服务；会话记录保存在本机。</p>
+    <p>启用语音后，合成文字可能发给 Edge TTS；配置阿里云密钥后会发给百炼。点击麦克风时，浏览器识别也可能使用在线服务。</p>
+    <p>新安装默认关闭语音、任务播报、长期记忆和主动交互；下一步可按需开启。</p>
+    <div class="onboarding-actions">
+      <button id="guide-skip" class="btn-ghost" type="button">跳过</button>
+      <button id="guide-next" class="btn-primary" type="button">下一步</button>
+    </div>
+  </section>
+  <section id="guide-choices" class="onboarding-step" hidden>
+    <div class="onboarding-kicker">首次使用 · 2 / 2</div>
+    <h2>选择要开启的功能</h2>
+    <label><input id="guide-voice" type="checkbox"> 语音朗读</label>
+    <label><input id="guide-broadcast" type="checkbox"> 任务开始 / 完成播报</label>
+    <label><input id="guide-memory" type="checkbox"> 长期记忆</label>
+    <label><input id="guide-extract" type="checkbox"> 自动抽取长期事实</label>
+    <label><input id="guide-idle" type="checkbox"> 空闲时主动开口</label>
+    <label><input id="guide-call" type="checkbox"> 主动来电</label>
+    <p class="onboarding-hint">语音与任务播报可能调用在线语音服务；所有选项都能在「设置」中更改。</p>
+    <div class="onboarding-actions">
+      <button id="guide-back" class="btn-ghost" type="button">返回</button>
+      <button id="guide-finish" class="btn-primary" type="button">完成</button>
+    </div>
+  </section>
+  <p id="guide-error" class="onboarding-error" role="alert" hidden></p>
+</dialog>
+
+<audio id="player" preload="auto"></audio>
+  <!-- the incoming-call ring: its own channel, so a slow line cannot mute it -->
+  <audio id="ring" preload="auto"></audio>
+<script type="module" src="/amadeus/panel/main.js"></script>
+</body>
+</html>

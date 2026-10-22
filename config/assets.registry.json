@@ -1,0 +1,65 @@
+{
+  "_comment": "素材注册表：唯一真相源。sha256 写死，源内容变化即拒绝安装，不静默接受。",
+  "version": 1,
+  "packs": [
+    {
+      "id": "kurisu-model",
+      "kind": "model",
+      "character": "kurisu",
+      "version": "1.0.0",
+      "engine": "cubism2",
+      "format": "tar.gz",
+      "sizeBytes": 8632320,
+      "sha256": "0D5D0A5005BD28F18AD6F563DA6460B17309944E26384DDC55DD10653C254DF2",
+      "stripRoot": "kurisu",
+      "entry": "kurisu.model.json",
+      "layout": {
+        "scale": 1,
+        "x": 0,
+        "y": 0,
+        "yRatio": 0.52
+      },
+      "expressionMap": {
+        "f02": ["sad", "disappointed", "soft"],
+        "f03": ["angry", "furious", "annoyed"],
+        "f04": ["surprised", "blush"]
+      },
+      "motionMap": {
+        "idle": { "group": "idle", "variants": 1 },
+        "head": { "group": "flick_head", "variants": 3 },
+        "body": { "group": "tap_body", "variants": 3 },
+        "other": { "group": "pinch_in", "variants": 3 }
+      },
+      "motionSounds": {
+        "flick_head": "flickHead",
+        "tap_body": "tapBody",
+        "pinch_in": "pinchIn",
+        "pinch_out": "pinchOut",
+        "shake": "shake"
+      },
+      "motionSoundsNote": "动作音效文件名与动作同名。模型自带 15 个 mp3，随包解包并按需播放；口型分析器挂在语音元素上，所以音效走独立声道。",
+      "expressionMapNote": "按表情文件的真实参数映射：f01 无参数（no-op，不能用来区分情绪）；f02 = 眼睛下垂/身体下沉/撇嘴（忧郁）；f03 = 压眉/撇嘴（生气）；f04 = 睁大眼+kirakira+脸红 TERE（惊讶/害羞）。未列出的情绪会显式复位表情，避免上一个表情残留。",
+      "sources": [
+        "https://nyarchlinux.moe/kurisu.tar.gz"
+      ],
+      "licenseNote": "同人模型，来源不明、无商用许可；仅个人学习使用，不随本项目分发。",
+      "notes": "归档共 48 个文件：expressions/f01-f04、6 组 motions 共 18 个 .mtn、physics、pose、hit_areas 与 15 个动作音效。模型文件名为 shizuku.*（骨架沿用官方 shizuku，仅替换贴图）。M4 只播放动作，音效解包保留但不播放。"
+    },
+    {
+      "id": "cubism2-runtime",
+      "kind": "runtime",
+      "character": null,
+      "version": "1.0.0",
+      "engine": "cubism2",
+      "format": "js",
+      "sizeBytes": 129056,
+      "sha256": "E4EA1F18BDD44B65394FFD5A1BAB16982E88757D45134D1BD0737C8A6B3DDD08",
+      "target": "live2d.min.js",
+      "sources": [
+        "https://raw.githubusercontent.com/dylanNew/live2d/master/webgl/Live2D/lib/live2d.min.js"
+      ],
+      "licenseNote": "Live2D Cubism 2 运行时，版权归 Live2D Inc.，不随本项目分发；按需下载或由用户自备。",
+      "notes": "Cubism 2（.moc）渲染必需。Cubism 4 的 live2dcubismcore.min.js 不适用。"
+    }
+  ]
+}

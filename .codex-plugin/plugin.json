@@ -1,0 +1,26 @@
+{
+  "name": "amadeus",
+  "version": "0.1.0",
+  "description": "Makise Kurisu companion for Codex Desktop: Live2D panel, Japanese voice, long-term memory, proactive calls.",
+  "author": {
+    "name": "Amadeus for Codex contributors"
+  },
+  "license": "MIT",
+  "keywords": ["amadeus", "kurisu", "steins-gate", "live2d", "tts", "memory", "companion"],
+  "skills": "./skills/",
+  "interface": {
+    "displayName": "Amadeus",
+    "shortDescription": "牧濑红莉栖数字伴侣：Live2D 面板 + 日语语音 + 长期记忆",
+    "longDescription": "把《命运石之门 0》的 Amadeus 带进 Codex Desktop。独立翻盖手机面板承载 Live2D 与聊天；默认语音配置使用阿里云百炼，未配置密钥或调用失败时退回 Edge TTS。对话默认复用 Codex 模型，长期记忆需手动开启，并可通过 MCP 工具管理。",
+    "developerName": "Amadeus for Codex",
+    "category": "Lifestyle",
+    "capabilities": ["Interactive", "Read", "Write"],
+    "defaultPrompt": [
+      "打开 Amadeus 面板。",
+      "让 Amadeus 记住这件事。",
+      "检查一下 Amadeus 的能力自检状态。"
+    ],
+    "brandColor": "#E0604F",
+    "screenshots": []
+  }
+}
