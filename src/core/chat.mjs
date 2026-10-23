@@ -10,6 +10,7 @@ const EXTRACT_PROMPT = `分析下面的对话，提取值得长期记住的用�
 
 只提取长期有效的事实：称呼、职业、长期偏好、习惯、重要关系、已经发生的人生节点。
 不要提取：当前动作（在吃饭/在忙）、当天计划、寒暄、情绪化的临时状态。
+只根据用户原话提取，不得把 Amadeus 的回答、推测或提问当作用户事实；不得补充原话没有的信息。
 判断标准：这条信息一周后还有意义吗？没有就不要。
 
 每条一行，格式：- [事实] 内容
@@ -38,7 +39,19 @@ function toHistory(messages) {
 
 /** Avoid a second model call for greetings and questions with no user fact to retain. */
 export function mayContainLongTermFact(text) {
-  return /(我|咱|俺|本人|我们|记住|别忘|以后|今后|长期|一直|喜欢|讨厌|习惯|请叫|称呼)/.test(String(text || ''))
+  return /(?:我|咱|俺|本人|我们).{0,24}(?:是|叫|姓|住|有|喜欢|讨厌|习惯|过敏|从事|工作|一直|长期|以后|今后)|(?:请叫我|记住我|别忘了我)/.test(String(text || ''))
+}
+
+/** Reject extracted details that cannot be traced back to a user's own words. */
+export function candidateSupportedByUser(candidate, userText) {
+  const claim = String(candidate || '').replace(/^(?:用户|本人|我)(?:的)?/, '').replace(/[\s，。！？、]/g, '')
+  const source = String(userText || '').replace(/[\s，。！？、]/g, '')
+  if (!claim || !source) return false
+  if (source.includes(claim)) return true
+  if (claim.length < 4) return false
+  const pairs = [...new Set(Array.from({ length: claim.length - 1 }, (_, i) => claim.slice(i, i + 2)))]
+  return pairs.filter((pair) => source.includes(pair)).length >= 2 &&
+    pairs.filter((pair) => source.includes(pair)).length / pairs.length >= 0.8
 }
 
 /**
@@ -154,14 +167,14 @@ export class ChatEngine extends EventEmitter {
     const memoryOn = this.config.getPath('memory.enabled') === true
     const oneshot = this.config.getPath('chat.oneshot') === true
     const recalled = memoryOn
-      ? this.memory.search(text, { k: this.#maxMemories(), namespace: 'panel' })
+      ? this.memory.search(text, { k: this.#maxMemories(), namespace: 'panel', types: ['fact', 'emotion', 'summary'] })
       : []
-    const recentFacts = memoryOn ? this.memory.list('panel', { limit: 8 }) : []
-    const merged = memoryOn ? dedupeById([...recalled, ...recentFacts]) : []
+    const recap = memoryOn ? this.memory.list('panel', { limit: 1, types: ['recap'] })[0] : null
 
     const system = buildSystemPrompt({
       persona,
-      memories: merged,
+      memories: recalled,
+      recap,
       summary: session.summary || '',
     })
 
@@ -262,9 +275,11 @@ export class ChatEngine extends EventEmitter {
     // impossible there.
     if (messages.length < 2) return { added: 0 }
     const adapter = this.llm.pick(this.config.getPath('chat.provider'))
-    const dialog = messages
-      .map((m) => `${m.role === 'user' ? '用户' : 'Amadeus'}: ${m.zh || m.ja}`)
+    const userMessages = messages.filter((m) => m.role === 'user')
+    const dialog = userMessages
+      .map((m) => `用户: ${m.zh || m.ja}`)
       .join('\n')
+    if (!userMessages.some((m) => mayContainLongTermFact(m.zh || m.ja))) return { added: 0 }
     let raw
     try {
       const res = await adapter.chat({
@@ -286,6 +301,7 @@ export class ChatEngine extends EventEmitter {
 
     let added = 0
     for (const content of lines) {
+      if (!candidateSupportedByUser(content, dialog)) continue
       try {
         const before = this.memory.list('panel', { limit: 1000 }).length
         this.memory.add('panel', { content, source: 'auto-extract', workspace })
@@ -311,21 +327,11 @@ export class ChatEngine extends EventEmitter {
   recordRecap(sessionId) {
     try {
       const messages = this.sessions.recentMessages(sessionId, 6)
-      const user = messages.find((m) => m.role === 'user')
+      const user = [...messages].reverse().find((m) => m.role === 'user')
       const assistant = [...messages].reverse().find((m) => m.role === 'assistant')
       if (!user || !assistant) return { added: 0 }
       const clip = (text, max) => String(text || '').replace(/\s+/g, ' ').trim().slice(0, max)
       const line = `上次聊天：用户说「${clip(user.zh || user.ja, 60)}」，我回应「${clip(assistant.zh || assistant.ja, 60)}」`
-      const previous = this.memory
-        .list('panel', { limit: 200 })
-        .filter((entry) => entry.source === 'conversation')
-      for (const old of previous.slice(0, Math.max(0, previous.length - 2))) {
-        try {
-          this.memory.remove(old.id)
-        } catch {
-          /* pruning is best effort */
-        }
-      }
       this.memory.add('panel', { content: line, source: 'conversation', type: 'recap' })
       this.emit('memory:changed', { namespace: 'panel', added: 1 })
       return { added: 1 }
@@ -368,15 +374,4 @@ export class ChatEngine extends EventEmitter {
     this.emit('session:changed', { sessionId })
     return { compressed: true, kept: toKeep.length, summary }
   }
-}
-
-function dedupeById(list) {
-  const seen = new Set()
-  const out = []
-  for (const item of list) {
-    if (seen.has(item.id)) continue
-    seen.add(item.id)
-    out.push(item)
-  }
-  return out
 }

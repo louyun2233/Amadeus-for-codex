@@ -1,6 +1,6 @@
 {
   "name": "amadeus-codex",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Amadeus (Makise Kurisu) companion for Codex Desktop: Live2D panel + voice + memory",
   "type": "module",

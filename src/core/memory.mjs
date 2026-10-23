@@ -1,6 +1,7 @@
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { readJson, writeJsonAtomic } from './store.mjs'
+import fs from 'node:fs'
+import { writeJsonAtomic } from './store.mjs'
 import { analyzeChange } from './contradiction.mjs'
 import { AmadeusError, ErrorCode } from '../shared/errors.mjs'
 
@@ -11,9 +12,16 @@ function id() {
 }
 
 function terms(text) {
-  return String(text)
-    .toLowerCase()
-    .match(/[a-z0-9_]{2,}|[\u3040-\u30ff\u4e00-\u9fff]/g) || []
+  const chunks = String(text).toLowerCase().match(/[a-z0-9_]{2,}|[\u3040-\u30ff\u4e00-\u9fff]+/g) || []
+  const out = new Set()
+  for (const chunk of chunks) {
+    if (!/[\u3040-\u30ff\u4e00-\u9fff]/.test(chunk) || chunk.length <= 2) {
+      out.add(chunk)
+      continue
+    }
+    for (let i = 0; i < chunk.length - 1; i++) out.add(chunk.slice(i, i + 2))
+  }
+  return [...out]
 }
 
 /**
@@ -110,13 +118,50 @@ export class MemoryStore {
   }
 
   #read(ns) {
-    const data = readJson(this.files[ns], { entries: [] })
-    const entries = Array.isArray(data.entries) ? data.entries : []
-    return { entries }
+    const file = this.files[ns]
+    const read = (candidate) => {
+      try {
+        const data = JSON.parse(fs.readFileSync(candidate, 'utf8'))
+        if (!data || !Array.isArray(data.entries)) throw new Error('invalid memory schema')
+        return data
+      } catch (error) {
+        if (error?.code === 'ENOENT') return null
+        return { error }
+      }
+    }
+    const primary = read(file)
+    if (primary && !primary.error) return primary
+    const backup = read(`${file}.bak`)
+    if (backup && !backup.error) return backup
+    if (!primary && !backup) return { entries: [] }
+    // Never turn a damaged memory file into an empty collection: the next
+    // write would otherwise replace the only surviving copy of the user's data.
+    throw new AmadeusError(ErrorCode.UNAVAILABLE,
+      `memory ${ns} could not be read; inspect ${path.basename(file)} and its .bak backup`)
   }
 
-  #write(ns, data) {
-    writeJsonAtomic(this.files[ns], data)
+  #write(ns, data, { backup = true } = {}) {
+    const file = this.files[ns]
+    if (backup) {
+      try {
+        const current = JSON.parse(fs.readFileSync(file, 'utf8'))
+        if (!current || !Array.isArray(current.entries)) throw new Error('invalid memory schema')
+        writeJsonAtomic(`${file}.bak`, current)
+      } catch (error) {
+        if (error?.code !== 'ENOENT' && !(error instanceof SyntaxError) && error?.message !== 'invalid memory schema') {
+          throw error
+        }
+        // A damaged primary is not copied over the last good backup.
+      }
+    }
+    writeJsonAtomic(file, data)
+    if (!backup) {
+      try {
+        fs.unlinkSync(`${file}.bak`)
+      } catch (error) {
+        if (error?.code !== 'ENOENT') throw error
+      }
+    }
   }
 
   add(
@@ -134,13 +179,13 @@ export class MemoryStore {
     // All storage I/O here is synchronous, and Node runs this file's code on a
     // single thread, so a lock adds ordering latency without adding safety.
     const data = this.#read(ns)
-    const existing = data.entries.find((e) => e.content === text)
+    const existing = data.entries.find((e) => !e.supersededBy && e.content === text)
     if (existing) return existing
     const entry = {
       id: id(),
       namespace: ns,
       content: text,
-      type: ['fact', 'emotion', 'summary'].includes(type) ? type : 'fact',
+      type: ['fact', 'emotion', 'summary', 'recap'].includes(type) ? type : 'fact',
       tags: (Array.isArray(tags) ? tags : []).map((t) => String(t).slice(0, 40)).slice(0, 8),
       workspace: workspace ? String(workspace).slice(0, 200) : null,
       source,
@@ -152,10 +197,11 @@ export class MemoryStore {
     // A correction must not sit next to the fact it corrects. Near-duplicates
     // that flip polarity / a number / an antonym supersede the older entry:
     // it is kept on disk for audit, but it stops being served.
-    if (supersede) {
+    if (supersede && entry.type === 'fact') {
       for (const older of data.entries) {
         if (older.supersededBy) continue
         if (older.namespace !== ns) continue
+        if (older.type !== 'fact') continue
         const change = analyzeChange(older.content, text)
         if (!change) continue
         older.supersededBy = entry.id
@@ -168,38 +214,29 @@ export class MemoryStore {
     }
 
     data.entries.push(entry)
-    const max = this.config?.getPath?.('memory.maxPerNamespace') ?? 100
-    if (data.entries.length > max) {
-      // drop oldest non-summary entries first, then oldest overall
-      const overflow = data.entries.length - max
-      const candidates = data.entries
-        .filter((e) => e.type !== 'summary')
-        .sort((a, b) => a.ts - b.ts)
-      const drop = new Set()
-      for (let i = 0; i < overflow && i < candidates.length; i++) drop.add(candidates[i].id)
-      if (drop.size < overflow) {
-        const summaries = data.entries
-          .filter((e) => !drop.has(e.id))
-          .sort((a, b) => a.ts - b.ts)
-        for (const entry of summaries.slice(0, overflow - drop.size)) drop.add(entry.id)
-      }
-      data.entries = data.entries.filter((e) => !drop.has(e.id))
-    }
+    // Stable facts and corrections are never evicted merely because a soft
+    // capacity was reached. Only transient conversation recaps are bounded.
+    const maxRecaps = Math.min(3, this.config?.getPath?.('memory.maxPerNamespace') ?? 100)
+    const recaps = data.entries.slice().reverse().filter((e) => e.type === 'recap' || e.source === 'conversation')
+      .sort((a, b) => b.ts - a.ts)
+    const expired = new Set(recaps.slice(maxRecaps).map((e) => e.id))
+    if (expired.size) data.entries = data.entries.filter((e) => !expired.has(e.id))
     this.#write(ns, data)
     return entry
   }
 
-  list(namespace, { limit = 100, workspace = null, includeSuperseded = false } = {}) {
+  list(namespace, { limit = 100, workspace = null, includeSuperseded = false, types = null } = {}) {
     const ns = this.#ns(namespace)
     let entries = this.#read(ns).entries
     if (!includeSuperseded) entries = entries.filter((e) => !e.supersededBy)
     if (workspace) entries = entries.filter((e) => e.workspace === workspace)
-    return entries.slice().sort((a, b) => b.ts - a.ts).slice(0, limit)
+    if (types) entries = entries.filter((e) => types.includes(e.source === 'conversation' ? 'recap' : e.type))
+    return entries.slice().reverse().sort((a, b) => b.ts - a.ts).slice(0, limit)
   }
 
   search(
     query,
-    { k = 8, namespace = null, workspace = null, includeSuperseded = false, now = Date.now(), touch = true } = {},
+    { k = 8, namespace = null, workspace = null, includeSuperseded = false, types = null, now = Date.now(), touch = true } = {},
   ) {
     const q = terms(query)
     if (q.length === 0) return []
@@ -209,6 +246,7 @@ export class MemoryStore {
       for (const entry of this.#read(ns).entries) {
         if (!includeSuperseded && entry.supersededBy) continue
         if (workspace && entry.workspace && entry.workspace !== workspace) continue
+        if (types && !types.includes(entry.source === 'conversation' ? 'recap' : entry.type)) continue
         const s = score(entry, q, now)
         if (s > 0) scored.push({ ...entry, score: Number(s.toFixed(3)) })
       }
@@ -255,7 +293,7 @@ export class MemoryStore {
       const before = data.entries.length
       data.entries = data.entries.filter((e) => e.id !== memoryId)
       if (data.entries.length !== before) {
-        this.#write(ns, data)
+        this.#write(ns, data, { backup: false })
         return { removed: 1, namespace: ns }
       }
     }
@@ -270,11 +308,13 @@ export class MemoryStore {
       const data = this.#read(ns)
       const keep = []
       for (const entry of data.entries) {
-        const hit = q.some((t) => entry.content.toLowerCase().includes(t))
+        // Forgetting is destructive: a multi-term query must match all terms,
+        // not any common Chinese character fragment.
+        const hit = q.every((t) => entry.content.toLowerCase().includes(t))
         if (hit) removed += 1
         else keep.push(entry)
       }
-      if (keep.length !== data.entries.length) this.#write(ns, { entries: keep })
+      if (keep.length !== data.entries.length) this.#write(ns, { entries: keep }, { backup: false })
     }
     return { removed }
   }
@@ -283,7 +323,7 @@ export class MemoryStore {
     const ns = this.#ns(namespace)
     const data = this.#read(ns)
     const removed = data.entries.length
-    this.#write(ns, { entries: [] })
+    this.#write(ns, { entries: [] }, { backup: false })
     return { removed, namespace: ns }
   }
 

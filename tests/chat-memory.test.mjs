@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { ChatEngine } from '../src/core/chat.mjs'
+import { ChatEngine, candidateSupportedByUser, mayContainLongTermFact } from '../src/core/chat.mjs'
 import { SessionStore } from '../src/core/sessions.mjs'
 import { MemoryStore } from '../src/core/memory.mjs'
 import { ConfigStore } from '../src/core/config.mjs'
@@ -97,7 +97,62 @@ test('recaps stay bounded: only the last few are kept', async () => {
     config.update({ memory: { enabled: true, autoExtract: false } })
     for (let i = 0; i < 6; i += 1) await runTurn(chat, sessions, `第${i}件事`)
     const recaps = memory.list('panel', { limit: 50 }).filter((entry) => entry.source === 'conversation')
-    assert.ok(recaps.length <= 3, `recaps=${recaps.length}`)
+    assert.equal(recaps.length, 3)
+    assert.equal(recaps[0].type, 'recap')
+    assert.match(recaps[0].content, /第5件事/)
+    assert.match(recaps[2].content, /第3件事/)
+  } finally {
+    cleanup(paths)
+  }
+})
+
+test('a question about Amadeus does not become a fact about the user', async () => {
+  const { paths, config, sessions, memory, chat, calls } = harness()
+  try {
+    config.update({ memory: { enabled: true, autoExtract: true } })
+    await runTurn(chat, sessions, '你喜欢猫吗？')
+    assert.equal(calls.length, 1)
+    assert.equal(memory.list('panel', { types: ['fact'] }).length, 0)
+    assert.equal(mayContainLongTermFact('你喜欢猫吗？'), false)
+  } finally {
+    cleanup(paths)
+  }
+})
+
+test('unsupported model extraction is rejected before writing memory', async () => {
+  const { paths, config, sessions, memory, chat } = harness()
+  try {
+    config.update({ memory: { enabled: true, autoExtract: true } })
+    await runTurn(chat, sessions, '其实我是工程师。')
+    assert.equal(memory.list('panel', { types: ['fact'] }).length, 0,
+      'the canned model says doctor, which the user never said')
+    assert.equal(candidateSupportedByUser('用户是法国医生', '用户: 其实我是医生'), false)
+    assert.equal(candidateSupportedByUser('用户是医生', '用户: 其实我是医生'), true)
+  } finally {
+    cleanup(paths)
+  }
+})
+
+test('unrelated recent facts do not leak into each new prompt', async () => {
+  const { paths, config, sessions, memory, chat, calls } = harness()
+  try {
+    config.update({ memory: { enabled: true, autoExtract: false } })
+    memory.add('panel', { content: '用户喜欢芒果' })
+    await runTurn(chat, sessions, '今天的天气怎么样？')
+    assert.doesNotMatch(calls[0].system, /用户喜欢芒果/)
+  } finally {
+    cleanup(paths)
+  }
+})
+
+test('legacy recaps are labelled as conversation context, not durable facts', async () => {
+  const { paths, config, sessions, memory, chat, calls } = harness()
+  try {
+    config.update({ memory: { enabled: true, autoExtract: false } })
+    memory.add('panel', { content: '上次聊天：用户说「实验很难」', source: 'conversation', type: 'fact' })
+    await runTurn(chat, sessions, '还记得上次聊天吗？')
+    assert.match(calls[0].system, /最近一次对话提要/)
+    assert.doesNotMatch(calls[0].system, /【关于用户的长期记忆[^]*实验很难/)
   } finally {
     cleanup(paths)
   }

@@ -1,5 +1,7 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
+import fs from 'node:fs'
+import path from 'node:path'
 import { MemoryStore } from '../src/core/memory.mjs'
 import { ConfigStore } from '../src/core/config.mjs'
 import { tempPaths, cleanup } from './helpers.mjs'
@@ -87,7 +89,7 @@ test('rejects empty or oversized content and unknown namespace', () => {
   }
 })
 
-test('summary-only memory still obeys the namespace capacity', () => {
+test('a soft capacity never silently deletes durable memories', () => {
   const paths = tempPaths()
   try {
     const config = new ConfigStore(paths)
@@ -96,9 +98,76 @@ test('summary-only memory still obeys the namespace capacity', () => {
     for (let i = 0; i < 12; i++) {
       memory.add('panel', { content: `摘要 ${i}`, type: 'summary', supersede: false, ts: i + 1 })
     }
-    assert.equal(memory.stats().panel.total, 10)
+    assert.equal(memory.stats().panel.total, 12)
     assert.deepEqual(memory.list('panel').map((entry) => entry.content),
-      Array.from({ length: 10 }, (_, index) => `摘要 ${11 - index}`))
+      Array.from({ length: 12 }, (_, index) => `摘要 ${11 - index}`))
+  } finally {
+    cleanup(paths)
+  }
+})
+
+test('recaps have their own short retention window and never evict facts', () => {
+  const paths = tempPaths()
+  try {
+    const memory = makeStore(paths)
+    const fact = memory.add('panel', { content: '用户喜欢科幻电影', ts: 1 })
+    for (let i = 0; i < 6; i++) {
+      memory.add('panel', { content: `上次聊天：第${i}次`, type: 'recap', source: 'conversation', ts: i + 2 })
+    }
+    assert.equal(memory.list('panel', { types: ['recap'] }).length, 3)
+    assert.equal(memory.list('panel', { types: ['fact'] })[0].id, fact.id)
+    assert.equal(memory.list('panel', { types: ['recap'] })[0].content, '上次聊天：第5次')
+  } finally {
+    cleanup(paths)
+  }
+})
+
+test('memory reads its backup after a torn write, without resetting to empty', () => {
+  const paths = tempPaths()
+  try {
+    const memory = makeStore(paths)
+    memory.add('panel', { content: '用户喜欢天文学' })
+    memory.add('panel', { content: '用户喜欢物理学' })
+    const file = path.join(paths.memoryDir, 'panel.json')
+    assert.equal(fs.existsSync(`${file}.bak`), true)
+    fs.writeFileSync(file, '{"entries": [', 'utf8')
+    assert.equal(memory.list('panel')[0].content, '用户喜欢天文学')
+    memory.add('panel', { content: '用户喜欢数学' })
+    assert.deepEqual(memory.list('panel').map((entry) => entry.content),
+      ['用户喜欢数学', '用户喜欢天文学'])
+  } finally {
+    cleanup(paths)
+  }
+})
+
+test('corrupt memory with no good backup fails closed instead of becoming empty', () => {
+  const paths = tempPaths()
+  try {
+    const memory = makeStore(paths)
+    const file = path.join(paths.memoryDir, 'panel.json')
+    fs.mkdirSync(paths.memoryDir, { recursive: true })
+    fs.writeFileSync(file, '{broken', 'utf8')
+    assert.throws(() => memory.add('panel', { content: '不能覆盖原文件' }), /could not be read/)
+    assert.equal(fs.readFileSync(file, 'utf8'), '{broken')
+  } finally {
+    cleanup(paths)
+  }
+})
+
+test('explicit forgetting removes the automatic backup as well', () => {
+  const paths = tempPaths()
+  try {
+    const memory = makeStore(paths)
+    const first = memory.add('panel', { content: '用户喜欢猫' })
+    memory.add('panel', { content: '用户喜欢狗' })
+    const backup = path.join(paths.memoryDir, 'panel.json.bak')
+    assert.equal(fs.existsSync(backup), true)
+    memory.remove(first.id)
+    assert.equal(fs.existsSync(backup), false)
+    memory.add('panel', { content: '用户喜欢鸟' })
+    memory.clear('panel')
+    assert.equal(fs.existsSync(backup), false)
+    assert.equal(memory.stats().panel.total, 0)
   } finally {
     cleanup(paths)
   }

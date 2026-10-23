@@ -143,6 +143,21 @@ test('correcting twice keeps only the newest fact active', () => {
   }
 })
 
+test('a previously corrected fact can be asserted again', () => {
+  const { paths, memory } = store()
+  try {
+    const first = memory.add('panel', { content: '用户对花生过敏' })
+    const second = memory.add('panel', { content: '用户对花生不过敏' })
+    const third = memory.add('panel', { content: '用户对花生过敏' })
+    assert.notEqual(third.id, first.id)
+    assert.equal(memory.list('panel').length, 1)
+    assert.equal(memory.list('panel')[0].id, third.id)
+    assert.equal(memory.list('panel', { includeSuperseded: true }).find((x) => x.id === second.id).supersededBy, third.id)
+  } finally {
+    cleanup(paths)
+  }
+})
+
 test('the near-duplicate gate keeps the detector conservative', () => {
   // same polarity flip, but the two sentences are not near-duplicates
   assert.ok(similarity('用户对青霉素过敏', '用户对青霉素不过敏') > 0.6)
