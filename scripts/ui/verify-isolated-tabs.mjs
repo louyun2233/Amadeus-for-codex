@@ -166,7 +166,36 @@ try {
     inputVisible: document.querySelector('#input').getBoundingClientRect().bottom <= window.innerHeight,
   }))
   if (layout.horizontalOverflow || !layout.inputVisible) throw new Error(`300×520 layout regression: ${JSON.stringify(layout)}`)
+  if (process.env.AMADEUS_PANEL_SHOT) await a.screenshot({ path: process.env.AMADEUS_PANEL_SHOT })
   console.log('PASS  two independent panel clients connected')
+
+  // Preview the call geometry without queuing a real utterance or ringing.
+  await a.evaluate(() => {
+    document.querySelector('#phone').classList.add('call-ringing')
+    document.querySelector('#call-overlay').classList.remove('hidden')
+  })
+  const callLayout = await a.evaluate(() => {
+    const phone = document.querySelector('#phone').getBoundingClientRect()
+    const screen = document.querySelector('#screen').getBoundingClientRect()
+    const accept = document.querySelector('#call-accept').getBoundingClientRect()
+    const deny = document.querySelector('#call-deny').getBoundingClientRect()
+    return {
+      ratio: screen.height / phone.height,
+      acceptVisible: accept.left >= screen.left && accept.right <= screen.right && accept.bottom <= screen.bottom,
+      denyVisible: deny.left >= screen.left && deny.right <= screen.right && deny.bottom <= screen.bottom,
+      label: document.querySelector('#call-sub').textContent,
+    }
+  })
+  if (callLayout.ratio < .75 || !callLayout.acceptVisible || !callLayout.denyVisible ||
+      callLayout.label !== 'Call from Kurisu.') {
+    throw new Error(`incoming-call layout regression: ${JSON.stringify(callLayout)}`)
+  }
+  if (process.env.AMADEUS_CALL_SHOT) await a.screenshot({ path: process.env.AMADEUS_CALL_SHOT })
+  await a.click('#call-deny')
+  if (await a.locator('#phone').evaluate((el) => el.classList.contains('call-ringing'))) {
+    throw new Error('declining did not restore the regular phone layout')
+  }
+  console.log('PASS  incoming call fills the screen and restores the keypad after decline')
 
   // Focus is a user-visible action: ownership must follow the focused tab.
   await a.bringToFront()
@@ -255,6 +284,15 @@ try {
     throw new Error('skipping the guide did not persist safely')
   }
   console.log('PASS  guide can be reopened, escaped, and skipped without changing choices')
+  hub.enqueueUtterance({ kind: 'call', text: '来电链路测试', cn: '来电链路测试' })
+  await b.locator('#call-overlay').waitFor({ state: 'visible' })
+  if (!(await b.locator('#phone').evaluate((el) => el.classList.contains('call-ringing'))) ||
+      (await b.locator('#call-sub').textContent()) !== 'Call from Kurisu.') {
+    throw new Error('a real call event did not open the retro caller screen')
+  }
+  await b.click('#call-deny')
+  await b.locator('#call-overlay').waitFor({ state: 'hidden' })
+  console.log('PASS  real incoming-call event uses the retro screen')
   if (errors.length) throw new Error(`page errors: ${errors.join(' | ')}`)
   console.log('PASS  cancel returns the UI to idle without page errors')
 } finally {

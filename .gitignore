@@ -6,6 +6,10 @@ docs/screenshots/
 *.log
 *.zip
 *.exe
+Amadeus.native
+/Microsoft.Web.WebView2.Core.dll
+/Microsoft.Web.WebView2.WinForms.dll
+/WebView2Loader.dll
 Amadeus.cmd
 Amadeus-watch.vbs
 .env*

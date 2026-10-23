@@ -20,13 +20,32 @@
       <div id="status-chip" role="status" aria-live="polite"><span class="dot"></span><span id="status-text">连接中…</span></div>
     </div>
 
-    <div id="call-overlay" class="hidden">
-      <div class="call-name" id="call-name">AMADEUS</div>
-      <div class="call-sub" id="call-sub">来电中…</div>
+    <div id="call-overlay" class="hidden" role="dialog" aria-modal="true" aria-labelledby="call-sub">
+      <div class="call-signal" aria-hidden="true">
+        <span class="call-xp">Xp</span>
+        <span class="call-reception"><i></i><i></i><i></i><i></i></span>
+        <span class="call-battery"><i></i></span>
+      </div>
+      <svg class="call-logo" viewBox="0 0 320 205" role="img" aria-label="Amadeus">
+        <defs>
+          <linearGradient id="call-gold" x1="0" y1="0" x2="1" y2="1">
+            <stop offset="0" stop-color="#ffdb83"/>
+            <stop offset=".45" stop-color="#bf722b"/>
+            <stop offset=".72" stop-color="#f7bc58"/>
+            <stop offset="1" stop-color="#84451d"/>
+          </linearGradient>
+        </defs>
+        <path class="call-logo-outline" fill="url(#call-gold)" fill-rule="evenodd"
+          d="M18 150 177 17v108h107l19 21H177v41l-27-2v-39H45Zm59-25h73V64Z"/>
+        <path class="call-logo-highlight" d="M32 146 172 28v103h114M158 180v-43H56"/>
+        <text x="70" y="149" class="call-logo-word">madeus</text>
+      </svg>
+      <div class="call-name" id="call-name">牧濑红莉栖</div>
+      <div class="call-sub" id="call-sub">Call from Kurisu.</div>
       <div class="call-ring-status" id="call-ring-status" role="status" aria-live="polite"></div>
       <div class="call-btns">
-        <button id="call-accept" class="btn-primary">接听</button>
-        <button id="call-deny" class="btn-ghost">拒接</button>
+        <button id="call-accept" type="button" aria-label="接听红莉栖来电">CONNECT</button>
+        <button id="call-deny" type="button" aria-label="拒接来电">DECLINE</button>
       </div>
     </div>
   </div>
@@ -94,6 +113,12 @@
       </div>
       <div id="diag-out" class="list mono"></div>
     </section>
+
+    <div id="hardware" aria-hidden="true">
+      <span class="hardware-grille"></span>
+      <span class="hardware-key"></span>
+      <span class="hardware-grille"></span>
+    </div>
   </div>
 </div>
 

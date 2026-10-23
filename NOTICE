@@ -43,6 +43,16 @@ Bundled libraries (MIT, redistributed with this project)
     MIT License, Copyright (c) 2020 Guan
     See src/panel/vendor/LICENSE.pixi-live2d-display.txt
 
+  - Microsoft.Web.WebView2 SDK 1.0.3856.49 — https://www.nuget.org/packages/Microsoft.Web.WebView2
+    Copyright (c) Microsoft Corporation. The SDK's managed assemblies and
+    x64 WebView2Loader.dll are bundled to build the local desktop window.
+    See scripts/webview2/LICENSE.txt. The WebView2 Runtime is not bundled.
+
+  - Amadeus application icon — scripts/Amadeus.ico
+    Supplied by the project maintainer from an earlier Amadeus application;
+    the maintainer confirmed permission to redistribute it. This statement
+    does not grant rights to other character artwork or voice samples.
+
 Not bundled (downloaded on demand into the user's own cache)
 ------------------------------------------------------------
 

@@ -9,6 +9,7 @@ import {
   panelAnswers,
   panelUrl,
   launchInFlight,
+  nativeWindowArgs,
 } from '../src/host/panel-launcher.mjs'
 import { tempPaths, cleanup } from './helpers.mjs'
 
@@ -45,7 +46,15 @@ test('the double-click launcher requests a one-shot welcome through the panel en
   const panelEntry = fs.readFileSync(new URL('../bin/amadeus-panel.mjs', import.meta.url), 'utf8')
   assert.match(exeSource, /--silent --welcome/)
   assert.match(builder, /--silent --welcome/)
+  assert.match(builder, /\/win32icon:\$IconSource/)
   assert.match(panelEntry, /welcome: args\.includes\('--welcome'\)/)
+})
+
+test('native host receives its URL over stdin, not process arguments', () => {
+  assert.deepEqual(nativeWindowArgs(), ['--panel-stdin'])
+  const source = fs.readFileSync(new URL('../scripts/launcher.cs', import.meta.url), 'utf8')
+  assert.match(source, /Console\.In\.ReadLine\(\)/)
+  assert.match(source, /target\.Host != "127\.0\.0\.1"/)
 })
 
 test('a daemon that answers the token exchange counts as reachable', async () => {

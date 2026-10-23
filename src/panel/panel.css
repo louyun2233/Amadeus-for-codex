@@ -53,8 +53,8 @@ html[data-mode='app'] #phone {
   height: 100%;
   max-width: 284px;
   max-height: 504px;
-  border-radius: 18px;
-  padding: 10px;
+  border-radius: 7px;
+  padding: 6px;
   box-shadow: 0 12px 32px rgba(0, 0, 0, .45);
 }
 
@@ -65,14 +65,14 @@ html[data-mode='app'] #screen {
 #phone {
   width: 420px;
   max-width: 100%;
-  background: linear-gradient(180deg, #3a151c, #240d12);
-  border: 1px solid #571f2a;
-  border-radius: 22px;
-  box-shadow: 0 24px 60px rgba(0, 0, 0, .6), inset 0 1px 0 rgba(255, 255, 255, .06);
-  padding: 12px;
+  background: linear-gradient(90deg, #411713 0%, #863b27 3%, #2a0d0d 6%, #401515 94%, #a2482a 97%, #29100e 100%);
+  border: 2px solid #4c1c17;
+  border-radius: 10px;
+  box-shadow: 0 24px 60px rgba(0, 0, 0, .6), inset 1px 0 0 rgba(255, 201, 116, .28), inset -1px 0 0 rgba(255, 201, 116, .18);
+  padding: 8px;
   display: flex;
   flex-direction: column;
-  gap: 10px;
+  gap: 5px;
   height: calc(100vh - 36px);
 }
 
@@ -82,10 +82,11 @@ html[data-mode='app'] #screen {
   /* A taller top screen gives the character a portrait frame instead of a
      letterbox, which is what makes a bust model read properly. */
   height: clamp(280px, 44vh, 420px);
-  border-radius: 12px;
+  border-radius: 3px;
   overflow: hidden;
-  background: #0d0507;
-  border: 1px solid #4a2029;
+  background: #0b0d0b;
+  border: 2px solid #100909;
+  outline: 1px solid #814228;
 }
 
 #avatar-wrap { position: absolute; inset: 0; }
@@ -121,16 +122,40 @@ html[data-mode='app'] #screen {
   border-radius: var(--radius); padding: 6px 8px;
 }
 
-#hinge { display: flex; justify-content: center; gap: 60px; flex: 0 0 auto; }
-#hinge span { width: 46px; height: 4px; border-radius: 3px; background: #4d1f28; }
+#hinge {
+  display: flex; justify-content: center; align-items: center; gap: 38px; flex: 0 0 10px;
+  background: linear-gradient(180deg, #17090a, #65301f 45%, #140707);
+  border: 1px solid #30100e;
+}
+#hinge span { width: 46px; height: 3px; border-radius: 3px; background: #1a0a0a; box-shadow: 0 1px 0 #9a4c2d; }
 
 #keypad {
   flex: 1 1 auto; min-height: 0;
   display: flex; flex-direction: column;
-  background: #1b0d11;
-  border: 1px solid #3f1e26;
-  border-radius: 12px;
+  background: #220e0f;
+  border: 1px solid #54221b;
+  border-radius: 2px;
   overflow: hidden;
+}
+
+#hardware {
+  flex: 0 0 30px;
+  display: flex; align-items: center; justify-content: space-around;
+  padding: 0 18px;
+  border-top: 1px solid #562a20;
+  background: linear-gradient(180deg, #4a1e19, #21100f 38%, #652c1e 100%);
+}
+.hardware-grille {
+  width: 38px; height: 16px;
+  background: repeating-linear-gradient(90deg, transparent 0 4px, #100908 4px 7px);
+  transform: skewX(-20deg);
+  opacity: .7;
+}
+.hardware-key {
+  width: 26px; height: 26px; border-radius: 50%;
+  background: radial-gradient(circle at 40% 35%, #5d2b22, #170a0b 58%, #090606 66%);
+  border: 2px solid #8a4930;
+  box-shadow: 0 1px 3px #080404, inset 0 1px 2px #130707;
 }
 
 #tabs {
@@ -240,13 +265,99 @@ button:focus-visible, input:focus-visible, select:focus-visible, #input:focus-vi
 
 #call-overlay {
   position: absolute; inset: 0; z-index: 5;
-  background: rgba(20, 6, 10, .96);
-  display: flex; flex-direction: column; align-items: center; justify-content: center; gap: 10px;
+  overflow: hidden;
+  background: radial-gradient(ellipse at 48% 27%, #262519 0%, #11120e 39%, #090a09 76%), #0b0d0b;
+  color: #f3c77d;
 }
-#call-overlay .call-name { font-size: 20px; letter-spacing: 3px; }
-#call-overlay .call-sub { color: var(--text-dim); font-size: 12px; }
-#call-overlay .call-ring-status { color: var(--text); font-size: 12px; min-height: 18px; text-align: center; padding: 0 12px; }
-.call-btns { display: flex; gap: 12px; margin-top: 8px; }
+#call-overlay::before {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  background: linear-gradient(59deg, transparent 0 54%, rgba(188, 191, 177, .065) 54.2% 78%, transparent 78.2%),
+    linear-gradient(130deg, rgba(255, 251, 212, .1), transparent 38%);
+}
+#call-overlay::after {
+  content: ''; position: absolute; inset: 0; pointer-events: none;
+  box-shadow: inset 0 0 24px #000, inset 0 0 1px 2px rgba(230, 125, 51, .35);
+}
+.call-signal {
+  position: absolute; top: 7px; left: 7px; right: 7px; z-index: 1;
+  display: flex; align-items: end; gap: 5px;
+  height: 14px; color: #f1bc68; font: 700 12px Georgia, serif;
+  text-shadow: 0 0 4px #a45a23;
+}
+.call-xp { margin-right: auto; line-height: 1; }
+.call-reception { display: inline-flex; align-items: end; gap: 1px; height: 11px; }
+.call-reception i { width: 3px; background: #57b4eb; box-shadow: 0 0 2px #2084c5; }
+.call-reception i:nth-child(1) { height: 3px; }
+.call-reception i:nth-child(2) { height: 5px; }
+.call-reception i:nth-child(3) { height: 8px; }
+.call-reception i:nth-child(4) { height: 11px; }
+.call-battery { width: 20px; height: 9px; border: 1px solid #58a9d6; padding: 1px; position: relative; }
+.call-battery::after { content: ''; position: absolute; width: 2px; height: 4px; background: #58a9d6; top: 2px; right: -4px; }
+.call-battery i { display: block; width: 85%; height: 100%; background: #4bb7f0; }
+.call-logo {
+  position: absolute; z-index: 1; top: 17%; left: 50%;
+  width: min(84%, 320px); height: 39%; overflow: visible;
+  transform: translateX(-50%);
+  filter: drop-shadow(0 0 7px rgba(242, 151, 43, .48));
+}
+.call-logo-outline { stroke: #f4a645; stroke-width: 2; }
+.call-logo-highlight { fill: none; stroke: #ffe09a; stroke-width: 2; opacity: .72; }
+.call-logo-word {
+  font: 700 63px 'Arial Narrow', 'Segoe UI', sans-serif;
+  letter-spacing: -1px; fill: #21160e; stroke: #efb255; stroke-width: 1.6;
+  paint-order: stroke fill;
+}
+#call-overlay .call-name {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0, 0, 0, 0); white-space: nowrap; border: 0;
+}
+#call-overlay .call-sub {
+  position: absolute; z-index: 1; top: 59%; left: 7%; right: 7%;
+  color: #ecc888; font: 19px 'Cascadia Mono', Consolas, monospace;
+  text-shadow: 0 0 3px rgba(241, 158, 57, .4);
+}
+#call-overlay .call-ring-status {
+  position: absolute; z-index: 1; bottom: 9%; left: 6%; right: 6%;
+  color: #e0be8a; font-size: 11px; text-align: center;
+}
+.call-btns {
+  position: absolute; z-index: 1; top: 69%; left: 0; right: 0;
+  display: flex; flex-direction: column; align-items: center; gap: 9px;
+}
+#call-accept {
+  min-width: 142px; min-height: 48px; padding: 4px 20px;
+  border: 2px solid #ffae48; border-radius: 999px;
+  background: linear-gradient(#48200e, #1b0d09 45%, #4c1f0d);
+  box-shadow: inset 0 0 0 2px #682a10, 0 0 3px 1px #ff711c, 0 0 12px rgba(255, 108, 20, .72);
+  color: #ffd874; font: 700 20px Georgia, serif;
+  text-shadow: 0 0 4px #ff9e26;
+  cursor: pointer;
+}
+#call-accept:hover { filter: brightness(1.2); }
+#call-deny {
+  min-width: 104px; min-height: 44px;
+  border: 1px solid transparent; background: transparent;
+  color: #b79b7a; font: 11px 'Cascadia Mono', Consolas, monospace;
+  letter-spacing: 2px; cursor: pointer;
+}
+#call-deny:hover { color: #f3c77d; text-decoration: underline; }
+#phone.call-ringing { gap: 3px; }
+#phone.call-ringing #screen,
+html[data-mode='app'] #phone.call-ringing #screen { flex: 1 1 auto; height: auto; min-height: 0; }
+#phone.call-ringing #hinge { flex-basis: 9px; }
+#phone.call-ringing #keypad { flex: 0 0 55px; }
+#phone.call-ringing #tabs,
+#phone.call-ringing .view { display: none; }
+#phone.call-ringing #hardware { flex: 1 1 auto; }
+.call-btns button:focus-visible { outline: 2px solid #ffe39a; outline-offset: 4px; }
+@media (max-height: 460px) {
+  #call-overlay .call-sub { top: 56%; font-size: 16px; }
+  .call-btns { top: 67%; gap: 2px; }
+  #call-accept { min-height: 44px; font-size: 18px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .call-logo { filter: none; }
+}
 .btn-primary, .btn-ghost {
   font: inherit; padding: 7px 18px; border-radius: 8px; cursor: pointer;
   border: 1px solid var(--border-2); background: transparent; color: var(--text);

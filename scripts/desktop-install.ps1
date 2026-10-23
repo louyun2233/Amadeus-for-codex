@@ -39,6 +39,17 @@ try {
   Write-Host 'Step 3/3: Opening the panel...'
   & node bin\amadeus.mjs open
   if ($LASTEXITCODE -ne 0) { exit 1 }
+
+  # A Startup shortcut only runs at the next sign-in. Start its supervisor now
+  # as well, so opening Codex later in this same session also reconnects.
+  $watch = Join-Path $root 'Amadeus-watch.vbs'
+  if (Test-Path $watch) {
+    $running = @(Get-CimInstance Win32_Process -Filter "Name='wscript.exe'" -ErrorAction SilentlyContinue |
+      Where-Object { $_.CommandLine -like ('*' + $watch + '*') })
+    if ($running.Count -eq 0) {
+      Start-Process -FilePath (Join-Path $env:WINDIR 'System32\wscript.exe') -ArgumentList ('"' + $watch + '"') -WorkingDirectory $root -WindowStyle Hidden
+    }
+  }
 } finally {
   Pop-Location
 }

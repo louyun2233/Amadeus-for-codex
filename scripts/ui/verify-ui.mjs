@@ -359,11 +359,11 @@ await page.evaluate(() => {
 })
 await page.locator('#phone').screenshot({ path: path.join(SHOTS, 'panel-degraded.png') })
 
-// and the incoming-call overlay, which is where the Japanese-vs-Chinese copy
-// mistake showed up. Capture it so copy changes are visible in review.
+// Capture the full-screen incoming call, without sending a real call or
+// disturbing the daemon's queue/ringtone state.
 await page.evaluate(() => {
   document.getElementById('asset-note').classList.add('hidden')
-  document.getElementById('call-sub').textContent = '喂喂，我是红莉栖。听得见吗？'
+  document.getElementById('phone').classList.add('call-ringing')
   document.getElementById('call-overlay').classList.remove('hidden')
 })
 await page.waitForTimeout(400)
@@ -372,13 +372,17 @@ const callCopy = await page.evaluate(() => ({
   accept: document.getElementById('call-accept').textContent,
   deny: document.getElementById('call-deny').textContent,
   hint: document.getElementById('call-sub').textContent,
+  screenHeight: document.getElementById('screen').getBoundingClientRect().height,
+  phoneHeight: document.getElementById('phone').getBoundingClientRect().height,
 }))
 check(
-  'call controls use Chinese copy',
-  callCopy.accept === '接听' && callCopy.deny === '拒接',
+  'call controls match the retro screen',
+  callCopy.accept === 'CONNECT' && callCopy.deny === 'DECLINE',
   `${callCopy.accept}/${callCopy.deny}`,
 )
-check('call overlay no longer uses the Japanese hint', !callCopy.hint.includes('着信中'))
+check('call identifies the caller', callCopy.hint === 'Call from Kurisu.', callCopy.hint)
+check('call screen fills the flip phone', callCopy.screenHeight / callCopy.phoneHeight > .75,
+  `${Math.round(callCopy.screenHeight)}/${Math.round(callCopy.phoneHeight)}`)
 
 // App-window mode: `amadeus open` loads the panel with `#app`, and there the
 // phone has to fill the window. Page padding plus the dark gradient around it

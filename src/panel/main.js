@@ -80,6 +80,18 @@ const state = {
   pendingTurn: null,
 }
 
+function callerScreenName(displayName) {
+  const name = typeof displayName === 'string' ? displayName.trim() : ''
+  return !name || name === '牧濑红莉栖' ? 'Kurisu' : name
+}
+
+function updateCallerScreen() {
+  const name = state.characterContent?.displayName || '牧濑红莉栖'
+  $('call-name').textContent = name
+  $('call-sub').textContent = `Call from ${callerScreenName(name)}.`
+  $('call-accept').setAttribute('aria-label', `接听${name}来电`)
+}
+
 let live2d = null
 const motionSequence = createMotionSequence()
 let avatarMode = null
@@ -332,9 +344,9 @@ async function refreshStatus() {
     state.speechInput = data.speechInput || null
     state.characterContent = data.characterContent || null
     if (state.characterContent?.displayName) {
-      $('call-name').textContent = state.characterContent.displayName
       $('input').placeholder = `和 ${state.characterContent.displayName} 说话…`
     }
+    updateCallerScreen()
     if (settings) settings.setConfig(data.config)
     setStatus(`${(data.voice && data.voice.provider) || '—'} · 记忆 ${(data.memory && data.memory.panel && data.memory.panel.total) || 0}`)
   } catch (e) {
@@ -472,6 +484,16 @@ function cancelTurn() {
  * picks up; declining drops it.
  */
 let pendingCall = null
+let focusBeforeCall = null
+
+function closeCallScreen() {
+  $('call-overlay').classList.add('hidden')
+  $('phone').classList.remove('call-ringing')
+  if (focusBeforeCall?.isConnected && typeof focusBeforeCall.focus === 'function') {
+    focusBeforeCall.focus({ preventScroll: true })
+  }
+  focusBeforeCall = null
+}
 
 /**
  * Tell the hub the call line arrived.
@@ -493,10 +515,13 @@ function deliverUtterance(item) {
   if (!item) return
   welcomeCancelled = true
   if (item.kind === 'call') {
-    $('call-sub').textContent = item.cn || item.text || '来电中…'
+    updateCallerScreen()
     $('call-ring-status').textContent = ''
+    if (!$('phone').classList.contains('call-ringing')) focusBeforeCall = document.activeElement
+    $('phone').classList.add('call-ringing')
     $('call-overlay').classList.remove('hidden')
     pendingCall = item
+    if (!$('onboarding').open) $('call-accept').focus({ preventScroll: true })
     if (ringEnabled()) ringtone.start('/amadeus/sound/incoming', ringVolume())
     else $('call-ring-status').textContent = '铃声已在设置中关闭'
     ackHeldUtterance(item.id)
@@ -846,7 +871,7 @@ window.addEventListener('unhandledrejection', (ev) => {
 
 $('call-accept').addEventListener('click', () => {
   ringtone.stop('answered')
-  $('call-overlay').classList.add('hidden')
+  closeCallScreen()
   const item = pendingCall
   pendingCall = null
   // She speaks once the call is picked up, not over the ring.
@@ -854,8 +879,14 @@ $('call-accept').addEventListener('click', () => {
 })
 $('call-deny').addEventListener('click', () => {
   ringtone.stop('declined')
-  $('call-overlay').classList.add('hidden')
+  closeCallScreen()
   pendingCall = null
+})
+document.addEventListener('keydown', (event) => {
+  if (event.key === 'Escape' && $('phone').classList.contains('call-ringing')) {
+    event.preventDefault()
+    $('call-deny').click()
+  }
 })
 $('refresh').addEventListener('click', async () => {
   await refreshStatus()

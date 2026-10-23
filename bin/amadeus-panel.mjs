@@ -22,6 +22,7 @@ const MESSAGES = {
   tab: 'Opening Amadeus panel in the default browser',
   'already-open': 'Amadeus panel is already open.',
   'daemon-unavailable': 'Amadeus daemon is not available.',
+  'native-unavailable': 'Amadeus.exe is missing. Run scripts/build-launcher.ps1 to build the desktop window.',
 }
 
 const paths = ensureDirs(resolvePaths())
@@ -32,10 +33,10 @@ openPanel({
   browser: args.includes('--browser') || args.includes('--tab'),
   welcome: args.includes('--welcome'),
 })
-  .then(({ status, info }) => {
+  .then(({ status, info, ok }) => {
     const where = info ? `: http://127.0.0.1:${info.port}/amadeus/panel/` : ''
     say(`${MESSAGES[status] || status}${status === 'window' || status === 'tab' ? where : ''}`)
-    if (status === 'daemon-unavailable') process.exitCode = 1
+    if (!ok) process.exitCode = 1
   })
   .catch((e) => {
     // Never fail loudly: this runs from a watcher and from shortcuts.

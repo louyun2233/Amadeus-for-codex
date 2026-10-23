@@ -23,9 +23,12 @@ const EXPECTED_TEXT = [
   'AMADEUS',
   '--:--',
   '连接中…',
-  '来电中…',
-  '接听',
-  '拒接',
+  'Xp',
+  'madeus',
+  '牧濑红莉栖',
+  'Call from Kurisu.',
+  'CONNECT',
+  'DECLINE',
   '对话',
   '记忆',
   '设置',
@@ -179,14 +182,17 @@ test('user-visible copy uses the single-character ellipsis consistently', () => 
   assert.deepEqual(offenders, [], `use … instead of ... in: ${offenders.join(', ')}`)
 })
 
-test('the call controls are Chinese, not the Japanese variants', () => {
-  // 応 (U+5FDC) reads as a typo to a Chinese reader; 着信中 is Japanese phrasing
+test('retro call copy stays legible and the controls retain Chinese accessible labels', () => {
+  // The screen follows the English reference, while the controls are still
+  // announced in Chinese by assistive technology.
   const forbidden = ['応答', '拒否', '着信中']
   for (const word of forbidden) {
     assert.ok(!html.includes(word), `panel UI must not contain the Japanese string ${word}`)
     assert.ok(!panelText.includes(word), `${word} must not appear anywhere in the panel sources`)
   }
-  assert.ok(html.includes('接听'))
-  assert.ok(html.includes('拒接'))
-  assert.ok(html.includes('来电中'))
+  assert.ok(html.includes('Call from Kurisu.'))
+  assert.ok(html.includes('>CONNECT</button>'))
+  assert.ok(html.includes('>DECLINE</button>'))
+  assert.ok(html.includes('aria-label="接听红莉栖来电"'))
+  assert.ok(html.includes('aria-label="拒接来电"'))
 })

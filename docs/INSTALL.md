@@ -4,8 +4,9 @@
 
 | 需要 | 说明 |
 | --- | --- |
-| Node.js 22+ | 唯一必需的运行时。安装脚本会检查并在版本过低时明确报错 |
-| Codex Desktop | 面板通过浏览器打开，MCP 由 Codex 拉起 |
+| Node.js 22+ | 本机服务运行时。安装脚本会检查并在版本过低时明确报错 |
+| Microsoft Edge WebView2 Runtime | Windows 独立桌面窗口的渲染运行时；不是 Edge 浏览器标签页 |
+| Codex Desktop | MCP 由 Codex 拉起，任务边界由本机守候程序与 notify 传递 |
 | Windows | 安装脚本是 PowerShell。Linux/macOS 见下方"手工注册" |
 
 安装 Amadeus 本体不需要 Python、curl、API key 或 npm 运行时依赖；从零制作**本地克隆音色**则需另装 Qwen TTS WebUI，完整步骤见根目录 [使用教程.md](../使用教程.md)。
@@ -28,7 +29,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1
 2. 备份 `%CODEX_HOME%\config.toml`（若存在），然后在**临时文件**里追加注册块，
    用 `Move-Item -Force` 覆盖目标——中断不会截断原配置。
 3. 注册 `[mcp_servers.amadeus]`。已注册时保持原样，重复执行不会写第二份。
-4. 用 Windows 自带的 C# 编译器现编译连携启动器 `Amadeus.exe`（找不到编译器就生成 `Amadeus.cmd`）。
+4. 用 Windows 的 .NET Framework C# 编译器和包内 WebView2 SDK 现编译 `Amadeus.exe`。缺少编译器或 WebView2 SDK 时明确失败，不会静默退回浏览器窗口。
 5. 接管 Codex 的 `notify`：原本已有 notify 时把旧命令存到
    `%LOCALAPPDATA%\Amadeus\notify-chain.json`，我们的脚本每次先转发旧命令、再通知 Amadeus
    （卸载时还原）。这样任务真正完成时面板才会出声。
@@ -41,6 +42,10 @@ Codex 建立 Amadeus MCP 连接时会直接打开面板；安装脚本也会在�
 Codex 会话中只自动打开一次；手动关闭后不会因为新的 MCP 连接再次弹出。
 不需要 Codex 的 hook 机制，也不需要你在 `/hooks` 里信任任何东西。
 不想要开机自启就加 `-NoAutoStart`。
+
+双击发行包的安装入口还会立即启动本次登录的 watcher，不用等到下次重启电脑。`Amadeus.exe` 是独立 WinForms 应用窗口，界面内容由 WebView2 从本机 `127.0.0.1` 服务渲染；不会打开 Edge/Chrome 标签页。需要排查页面时，才手动运行 `node bin/amadeus.mjs open --browser`。
+
+发行包已附带默认图标 `scripts/Amadeus.ico`。安装时构建器将其同时用于 EXE 文件和应用窗口。若要换成自己的图标，可在源码层替换该文件，关闭正在运行的 Amadeus 窗口，再执行 `powershell -ExecutionPolicy Bypass -File scripts/build-launcher.ps1`。重新分发替换后的图标前，请确认其授权。
 
 如果已经在 `%LOCALAPPDATA%\Amadeus\qwen-service.json` 配好本地克隆音色，安装脚本还会创建当前用户的计划任务 `Amadeus Qwen TTS`。它在登录后隐藏启动 Qwen API，进程退出后尝试重启；`-NoAutoStart` 或 `-Uninstall` 会移除这项任务，不删除克隆音色或配置。首次加载模型可能需要几十秒。若使用自定义 `AMADEUS_DATA_DIR`，此任务不会自动创建，需自行启动 Qwen。任务调用的是配置中的本地 Python 和 `launch.py`，不会改用其他声线。
 

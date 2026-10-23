@@ -387,6 +387,10 @@ Write-Host "  data dir : $DataDir"
 $launcherBuilder = Join-Path $PSScriptRoot 'build-launcher.ps1'
 if (Test-Path $launcherBuilder) {
   & powershell -ExecutionPolicy Bypass -File $launcherBuilder
+  if ($LASTEXITCODE -ne 0) {
+    Write-Host '  launcher : setup could not refresh Amadeus.exe' -ForegroundColor Yellow
+    exit 1
+  }
 }
 
 if ($AutoStart) {

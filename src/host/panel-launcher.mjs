@@ -1,15 +1,15 @@
 import fs from 'node:fs'
 import path from 'node:path'
 import { spawn, execFileSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { ensureDaemon } from './daemon-client.mjs'
 
 /**
  * Bring the companion panel up as its own application window.
  *
  * Callers: `amadeus open`, the double-clickable `Amadeus.exe`, and the watcher
- * that waits for Codex to appear. Chromium's `--app=` gives a window with no
- * tabs and no address bar, which is as close to a native companion window as
- * this project gets without shipping a browser engine.
+ * that waits for Codex to appear. Windows uses the bundled WebView2 desktop
+ * host; explicit --browser remains available for troubleshooting.
  */
 
 const BROWSERS = [
@@ -144,6 +144,28 @@ export function appWindowArgs(url, { size = PANEL_WINDOW_SIZE, profileDir = null
 
 export function openAppWindow(exe, url, options = {}) {
   spawn(exe, appWindowArgs(url, options), BROWSER_SPAWN_OPTIONS).unref()
+}
+
+export function nativeWindowExecutable() {
+  if (process.platform !== 'win32') return null
+  const exe = fileURLToPath(new URL('../../Amadeus.exe', import.meta.url))
+  return fs.existsSync(exe) && fs.existsSync(path.join(path.dirname(exe), 'Amadeus.native')) ? exe : null
+}
+
+export function openNativeWindow(exe, url) {
+  const child = spawn(exe, nativeWindowArgs(), {
+    detached: true,
+    stdio: ['pipe', 'ignore', 'ignore'],
+    windowsHide: false,
+  })
+  child.stdin.on('error', () => {})
+  child.stdin.end(`${url}\n`)
+  child.unref()
+}
+
+export function nativeWindowArgs() {
+  // The bearer token goes over stdin, never into the process command line.
+  return ['--panel-stdin']
 }
 
 /**
@@ -283,6 +305,13 @@ export async function panelAnswers(info) {
 export async function openPanel({ paths, force = false, browser = false, ensure = true, welcome = false } = {}) {
   let info = ensure ? await ensureDaemon(paths) : null
   if (!info) return { ok: false, status: 'daemon-unavailable' }
+  const native = browser ? null : nativeWindowExecutable()
+  if (native && paths?.dataRoot) {
+    // Upgrade an old Edge --app panel in place. Only our dedicated profile is
+    // targeted; ordinary browser tabs and the user's other Edge windows stay.
+    const killed = killStalePanelBrowsers(path.join(paths.dataRoot, 'panel-profile'))
+    if (killed > 0) await new Promise((r) => setTimeout(r, 600))
+  }
   if (!force && (await panelIsOpen(info))) return { ok: true, status: 'already-open', info }
   // A window that was spawned a moment ago has not connected yet, so it is
   // invisible to `panelIsOpen`. Without this guard both callers open a window.
@@ -296,6 +325,14 @@ export async function openPanel({ paths, force = false, browser = false, ensure 
     if (!(await panelAnswers(info))) return { ok: false, status: 'panel-unreachable', info }
   }
 
+  if (native) {
+    noteLaunch(paths)
+    openNativeWindow(native, panelUrl(info, { app: true, welcome }))
+    return { ok: true, status: 'window', info }
+  }
+  if (process.platform === 'win32' && !browser) {
+    return { ok: false, status: 'native-unavailable', info }
+  }
   const exe = browser ? null : findBrowser()
   if (exe) {
     const profileDir = paths?.dataRoot ? path.join(paths.dataRoot, 'panel-profile') : null
