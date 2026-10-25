@@ -15,7 +15,7 @@ try {
   & node bin\amadeus.mjs start
   if ($LASTEXITCODE -ne 0) { exit 1 }
 
-  # The model/runtime are public downloads, not the user's private voice.
+  # The character model is a public download, not the user's private voice.
   # Skip network work on a re-install if the installed assets still verify.
   $assetsReady = $false
   try {
@@ -23,7 +23,7 @@ try {
     $assetsReady = ($LASTEXITCODE -eq 0 -and $verified.ok -eq $true)
   } catch { }
   if (-not $assetsReady) {
-    Write-Host 'Installing the character model and Live2D runtime...'
+    Write-Host 'Installing the character model...'
     try {
       $installed = (& node bin\amadeus.mjs assets install | Out-String) | ConvertFrom-Json
       $assetsReady = ($LASTEXITCODE -eq 0 -and $installed.ok -eq $true)

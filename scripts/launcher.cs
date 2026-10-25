@@ -1,11 +1,8 @@
-// Amadeus.exe: local WinForms/WebView2 panel host.
+// Amadeus.exe: starts the native Qt/OpenGL panel without a browser runtime.
 using System;
 using System.Diagnostics;
-using System.Drawing;
 using System.IO;
 using System.Windows.Forms;
-using Microsoft.Web.WebView2.Core;
-using Microsoft.Web.WebView2.WinForms;
 
 static class AmadeusLauncher
 {
@@ -14,102 +11,54 @@ static class AmadeusLauncher
     {
         try
         {
+            string root = AppDomain.CurrentDomain.BaseDirectory;
             if (args.Length == 1 && args[0] == "--panel-stdin")
             {
-                Uri target;
                 string address = Console.In.ReadLine();
+                Uri target;
                 if (!Uri.TryCreate(address, UriKind.Absolute, out target) ||
                     target.Scheme != "http" || target.Host != "127.0.0.1" ||
-                    target.AbsolutePath != "/amadeus/panel/index.html")
-                    throw new ArgumentException("The panel address must be a local Amadeus address.");
-                Application.EnableVisualStyles();
-                Application.SetCompatibleTextRenderingDefault(false);
-                Application.Run(new PanelWindow(target));
+                    target.Port < 1 || target.Port > 65535 ||
+                    String.IsNullOrEmpty(target.Query))
+                    throw new ArgumentException("Invalid local Amadeus daemon address.");
+
+                string python = Path.Combine(root, ".native-venv", "Scripts", "pythonw.exe");
+                string script = Path.Combine(root, "native", "panel.py");
+                if (!File.Exists(python) || !File.Exists(script))
+                    throw new FileNotFoundException("Native panel is not installed. Run 安装 Amadeus.cmd.");
+
+                var start = new ProcessStartInfo();
+                start.FileName = python;
+                start.Arguments = "\"" + script + "\"";
+                start.WorkingDirectory = root;
+                start.UseShellExecute = false;
+                start.RedirectStandardInput = true;
+                start.CreateNoWindow = true;
+                var child = Process.Start(start);
+                child.StandardInput.WriteLine(address);
+                child.StandardInput.Close();
                 return 0;
             }
 
-            string root = AppDomain.CurrentDomain.BaseDirectory;
-            string script = Path.Combine(root, "bin", "amadeus-panel.mjs");
-            if (!File.Exists(script))
-            {
-                MessageBox.Show(
-                    "Amadeus is not installed correctly.\r\n\r\nMissing: " + script,
-                    "Amadeus",
-                    MessageBoxButtons.OK,
-                    MessageBoxIcon.Error);
-                return 1;
-            }
-
-            ProcessStartInfo start = new ProcessStartInfo();
-            start.FileName = "node";
-            start.Arguments = "\"" + script + "\" --silent --welcome";
-            start.WorkingDirectory = root;
-            start.UseShellExecute = false;
-            start.CreateNoWindow = true;
-            Process.Start(start);
+            string launcher = Path.Combine(root, "bin", "amadeus-panel.mjs");
+            if (!File.Exists(launcher))
+                throw new FileNotFoundException("Missing: " + launcher);
+            var node = new ProcessStartInfo();
+            node.FileName = "node";
+            node.Arguments = "\"" + launcher + "\" --silent --welcome";
+            node.WorkingDirectory = root;
+            node.UseShellExecute = false;
+            node.CreateNoWindow = true;
+            Process.Start(node);
             return 0;
         }
         catch (Exception error)
         {
             MessageBox.Show(
                 "Could not start Amadeus: " + error.Message +
-                "\r\n\r\nNode.js 22+ and Microsoft Edge WebView2 Runtime are required.",
-                "Amadeus",
-                MessageBoxButtons.OK,
-                MessageBoxIcon.Error);
+                "\r\n\r\nRun 安装 Amadeus.cmd to install the native panel.",
+                "Amadeus", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
-        }
-    }
-
-    sealed class PanelWindow : Form
-    {
-        readonly WebView2 view = new WebView2();
-        readonly Uri target;
-
-        public PanelWindow(Uri url)
-        {
-            target = url;
-            Text = "AMADEUS";
-            try
-            {
-                Icon = System.Drawing.Icon.ExtractAssociatedIcon(Application.ExecutablePath)
-                    ?? SystemIcons.Application;
-            }
-            catch
-            {
-                Icon = SystemIcons.Application;
-            }
-            StartPosition = FormStartPosition.CenterScreen;
-            ClientSize = new Size(300, 520);
-            MinimumSize = new Size(260, 420);
-            BackColor = Color.FromArgb(26, 10, 18);
-            view.Dock = DockStyle.Fill;
-            Controls.Add(view);
-            Shown += async (sender, args) =>
-            {
-                try
-                {
-                    string profile = Path.Combine(
-                        Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData),
-                        "Amadeus", "webview-profile");
-                    Directory.CreateDirectory(profile);
-                    CoreWebView2EnvironmentOptions options = new CoreWebView2EnvironmentOptions(
-                        "--autoplay-policy=no-user-gesture-required");
-                    CoreWebView2Environment environment = await CoreWebView2Environment.CreateAsync(
-                        null, profile, options);
-                    await view.EnsureCoreWebView2Async(environment);
-                    view.CoreWebView2.Settings.AreDevToolsEnabled = false;
-                    view.CoreWebView2.Settings.AreDefaultContextMenusEnabled = false;
-                    view.Source = target;
-                }
-                catch (Exception error)
-                {
-                    MessageBox.Show(this, "Amadeus could not open its local window: " + error.Message +
-                        "\r\nInstall Microsoft Edge WebView2 Runtime, then try again.",
-                        "Amadeus", MessageBoxButtons.OK, MessageBoxIcon.Error);
-                    Close();
-                }
-            };
         }
     }
 }

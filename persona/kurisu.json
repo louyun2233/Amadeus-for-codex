@@ -1,5 +1,6 @@
 {
   "displayName": "牧濑红莉栖",
+  "callName": "Kurisu",
   "welcome": { "text": "おかえり。準備はできてるわ。", "emotion": "soft" },
   "tapReactions": [
     { "text": "ふぅん。", "emotion": "indifferent" },

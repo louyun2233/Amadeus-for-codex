@@ -105,7 +105,7 @@ Check 'autostart can be re-enabled' ((Test-Path $watchLnk) -and (Test-Path (Join
 Write-Host ''
 Write-Host '--- 3) incomplete package is refused without touching config ---'
 $before = HashOf $cfg
-$victim = Join-Path $app 'src\panel\live2d.js'
+$victim = Join-Path $app 'native\panel.py'
 Move-Item -LiteralPath $victim -Destination "$victim.renamed" -Force
 try {
   & powershell -ExecutionPolicy Bypass -File $installer -NoStart | Out-Null

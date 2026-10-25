@@ -26,9 +26,6 @@ if (!model || model.engine !== 'cubism2' || !safeSegment(model.id) || !safeSegme
     model.sizeBytes < 1 || !/^[a-f0-9]{64}$/i.test(model.sha256 || '') || !Array.isArray(model.sources)) {
   throw new Error('active character needs a Cubism 2 model pack and a .model.json entry')
 }
-if (!registry.packs.some((pack) => pack.kind === 'runtime' && pack.engine === model.engine)) {
-  throw new Error('active character needs a matching Cubism 2 runtime pack')
-}
 
 const paths = resolvePaths()
 const store = new ConfigStore(paths)

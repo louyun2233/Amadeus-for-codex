@@ -384,6 +384,13 @@ Write-Host "  data dir : $DataDir"
 
 # --- connector launcher: double-click to start, and the panel window --------
 
+$nativeInstaller = Join-Path $PSScriptRoot 'install-native.ps1'
+& powershell -NoProfile -ExecutionPolicy Bypass -File $nativeInstaller
+if ($LASTEXITCODE -ne 0) {
+  Write-Host '  native   : setup could not install the desktop renderer' -ForegroundColor Yellow
+  exit 1
+}
+
 $launcherBuilder = Join-Path $PSScriptRoot 'build-launcher.ps1'
 if (Test-Path $launcherBuilder) {
   & powershell -ExecutionPolicy Bypass -File $launcherBuilder

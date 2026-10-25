@@ -71,12 +71,11 @@ test('the report always carries a code, a reason and an action', async () => {
   }
 })
 
-test('a missing model and runtime are reported with their codes', async () => {
+test('a missing model is reported with its code', async () => {
   const assets = {
     status: () => ({
       packs: [
         { id: 'kurisu-model', kind: 'model', installed: false },
-        { id: 'cubism2-runtime', kind: 'runtime', installed: false, matches: false },
       ],
     }),
   }
@@ -84,7 +83,7 @@ test('a missing model and runtime are reported with their codes', async () => {
   try {
     const list = codes(result)
     assert.ok(list.includes(CODES.MODEL_MISSING), list.join(','))
-    assert.ok(list.includes(CODES.RUNTIME_MISSING), list.join(','))
+    assert.ok(!list.includes(CODES.RUNTIME_MISSING), list.join(','))
   } finally {
     cleanup(paths)
   }

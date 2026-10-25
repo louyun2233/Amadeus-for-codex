@@ -81,15 +81,15 @@ test('the daemon forwards recorded audio and returns the transcript', async () =
     const unauthenticated = await fetch(`${base}/amadeus/stt`, { method: 'POST', body: 'x' })
     assert.equal(unauthenticated.status, 401)
 
-    // Default configuration is the browser channel, which the daemon refuses.
-    const asBrowser = await fetch(`${base}/amadeus/stt`, {
+    // The native Windows recognizer runs in the panel, not in this HTTP route.
+    const asNative = await fetch(`${base}/amadeus/stt`, {
       method: 'POST',
       headers: { ...auth, 'Content-Type': 'audio/webm' },
       body: Buffer.alloc(1024, 3),
     })
-    assert.equal(asBrowser.status, 409)
-    assert.equal((await asBrowser.json()).degrade, 'use-browser')
-    assert.equal(state.calls, 0, 'the browser channel must not reach upstream')
+    assert.equal(asNative.status, 409)
+    assert.equal((await asNative.json()).degrade, 'use-native-panel')
+    assert.equal(state.calls, 0, 'the native channel must not reach upstream')
 
     const patched = await (
       await fetch(`${base}/amadeus/config`, {
@@ -137,8 +137,11 @@ test('the daemon forwards recorded audio and returns the transcript', async () =
     const health = await (await fetch(`${base}/amadeus/health`, { headers: auth })).json()
     assert.equal(health.ok, true)
   } finally {
-    child.kill('SIGTERM')
-    await new Promise((r) => child.once('exit', r))
+    if (child.exitCode === null && child.signalCode === null) {
+      const exited = new Promise((r) => child.once('exit', r))
+      child.kill('SIGTERM')
+      await exited
+    }
     await new Promise((r) => server.close(r))
     fs.rmSync(dir, { recursive: true, force: true })
   }

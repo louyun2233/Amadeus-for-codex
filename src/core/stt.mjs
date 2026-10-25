@@ -91,8 +91,8 @@ export class SttService {
   }
 
   providerId() {
-    const configured = this.config?.getPath?.('speechInput.provider') || 'browser'
-    return ['browser', 'api', 'none'].includes(configured) ? configured : 'browser'
+    const configured = this.config?.getPath?.('speechInput.provider') || 'windows-native'
+    return ['windows-native', 'browser', 'api', 'none'].includes(configured) ? configured : 'windows-native'
   }
 
   #baseUrl() {
@@ -129,6 +129,10 @@ export class SttService {
     }
     if (provider === 'none') {
       out.reason = 'speech input is switched off'
+    } else if (provider === 'windows-native') {
+      out.endpoint = 'Windows Speech Recognition'
+      out.selfHosted = true
+      out.reason = 'recognition runs in the native Windows panel'
     } else if (provider === 'browser') {
       out.reason = 'recognition runs in the panel (no key needed)'
     } else if (key || selfHosted) {
@@ -150,6 +154,11 @@ export class SttService {
 
   async transcribe(audio, { mime, lang } = {}) {
     const provider = this.providerId()
+    if (provider === 'windows-native') {
+      throw new AmadeusError(ErrorCode.DEGRADED, 'speech input is handled in the native Windows panel', {
+        degrade: 'use-native-panel',
+      })
+    }
     if (provider === 'browser') {
       throw new AmadeusError(ErrorCode.DEGRADED, 'speech input is handled in the browser', {
         degrade: 'use-browser',

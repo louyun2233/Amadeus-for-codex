@@ -8,7 +8,7 @@ import { ensureIncomingRing } from './sounds.mjs'
 import { findNotifyArray, isOurNotifyCommand } from './codex-config.mjs'
 import { CODES, degrade } from './codes.mjs'
 import { readOwnership, PRODUCT } from '../shared/layout.mjs'
-import { findBrowser } from '../host/panel-launcher.mjs'
+import { nativeWindowExecutable } from '../host/panel-launcher.mjs'
 import { characterSourceFile } from './character.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -120,7 +120,6 @@ export async function runDiagnostics({
   if (assets) {
     const assetStatus = assets.status()
     const model = assetStatus.activeModel
-    const runtime = assetStatus.activeRuntime
     out.checks.live2dModel = {
       ok: Boolean(model?.installed),
       installed: Boolean(model?.installed),
@@ -128,36 +127,12 @@ export async function runDiagnostics({
       expectedSha256: model?.expectedSha256 || null,
       entry: model?.entry || null,
     }
-    out.checks.live2dRuntime = {
-      ok: Boolean(runtime?.installed && runtime.matches),
-      installed: Boolean(runtime?.installed),
-      hashMatches: Boolean(runtime?.matches),
-      expectedSha256: runtime?.expectedSha256 || null,
-      actualSha256: runtime?.actualSha256 || null,
-    }
     if (!model?.installed) {
         out.degrade.push(
           degrade(CODES.MODEL_MISSING, {
             capability: 'live2d',
             reason: 'model not installed',
             action: 'run `amadeus assets install` (or use the panel button)',
-          }),
-        )
-    }
-    if (!runtime?.installed) {
-        out.degrade.push(
-          degrade(CODES.RUNTIME_MISSING, {
-            capability: 'live2d-runtime',
-            reason: 'Cubism 2 runtime (live2d.min.js) not installed',
-            action: 'run `amadeus assets install`, or drop your own live2d.min.js into the runtime cache',
-          }),
-        )
-    } else if (!runtime.matches) {
-        out.degrade.push(
-          degrade(CODES.RUNTIME_HASH_MISMATCH, {
-            capability: 'live2d-runtime',
-            reason: 'runtime file does not match the pinned hash',
-            action: 're-run `amadeus assets install --force`',
           }),
         )
     }
@@ -176,14 +151,16 @@ export async function runDiagnostics({
       )
     }
 
-    const browser = findBrowser()
-    out.checks.panelBrowser = { ok: Boolean(browser), path: browser || null }
-    if (!browser) {
+    const native = nativeWindowExecutable()
+    const python = path.resolve(HERE, '..', '..', '.native-venv', 'Scripts', 'pythonw.exe')
+    const nativeReady = Boolean(native && fs.existsSync(python))
+    out.checks.panelNative = { ok: nativeReady, launcher: native || null, python: fs.existsSync(python) }
+    if (!nativeReady) {
       out.degrade.push(
-        degrade(CODES.PANEL_BROWSER_MISSING, {
+        degrade(CODES.PANEL_NATIVE_MISSING, {
           capability: 'panel',
-          reason: 'no Edge/Chrome executable found',
-          action: 'install Microsoft Edge or Chrome, or set AMADEUS_BROWSER to its path',
+          reason: 'native Qt/OpenGL panel is not installed',
+          action: 'run 安装 Amadeus.cmd to install the native panel',
         }),
       )
     }
@@ -219,7 +196,7 @@ export async function runDiagnostics({
         degrade(CODES.SPEECH_INPUT_NOT_READY, {
           capability: 'speech-input',
           reason: stt.describe().reason,
-          action: 'paste a speech API key in the panel, or switch voice input back to browser',
+          action: 'check Windows speech recognition and microphone permissions',
         }),
       )
   }

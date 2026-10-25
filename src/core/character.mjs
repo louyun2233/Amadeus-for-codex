@@ -45,6 +45,10 @@ export function loadCharacterContent(name = 'kurisu') {
   if (typeof content.displayName !== 'string' || !content.displayName.trim() || content.displayName.length > 80) {
     throw new Error('displayName must be 1-80 characters')
   }
+  if (content.callName !== undefined &&
+      (typeof content.callName !== 'string' || !content.callName.trim() || content.callName.length > 80)) {
+    throw new Error('callName must be 1-80 characters when provided')
+  }
   line(content.welcome, ['text', 'emotion'], 'welcome')
   lines(content.tapReactions, ['text', 'emotion'], 'tapReactions')
   for (const kind of ['start', 'complete', 'failed']) {

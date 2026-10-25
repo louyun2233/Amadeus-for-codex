@@ -97,13 +97,14 @@ export function codexSpawnTarget(exe) {
 }
 
 /** Per-call override leaves the user's coding sessions at their own effort. */
-export function codexExecArgs({ cwd, outFile, model = '' }) {
+export function codexExecArgs({ cwd, outFile, model = '', imageFile = '' }) {
   const args = [
     'exec', '--json', '--ephemeral', '--skip-git-repo-check',
     '--config', 'model_reasoning_effort="low"',
     '-s', 'read-only', '-C', cwd, '-o', outFile,
   ]
   if (model) args.push('-m', model)
+  if (imageFile) args.push('-i', imageFile)
   args.push('-')
   return args
 }
@@ -140,7 +141,7 @@ export class CodexExecAdapter {
     return (await resolveCodex()) !== null
   }
 
-  async chat({ system, history = [], user, model, onDelta, onStatus, signal, timeoutMs = CHAT_TIMEOUT_MS }) {
+  async chat({ system, history = [], user, image = null, model, onDelta, onStatus, signal, timeoutMs = CHAT_TIMEOUT_MS }) {
     signal?.throwIfAborted()
     const exe = await this.resolveExecutable()
     if (!exe) {
@@ -157,15 +158,18 @@ export class CodexExecAdapter {
       os.tmpdir(),
       `amadeus-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`,
     )
+    const imageFile = image ? path.join(os.tmpdir(),
+      `amadeus-image-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}${image.suffix}`) : ''
 
     const cfgModel = model || this.getConfig?.()?.chat?.model
-    const args = codexExecArgs({ cwd: this.cwd, outFile, model: cfgModel })
+    const args = codexExecArgs({ cwd: this.cwd, outFile, model: cfgModel, imageFile })
 
     const reportStatus = (phase) => { try { onStatus?.(phase) } catch { /* UI progress is best-effort */ } }
     let streamedText = ''
     let exitCode = null
     let text
     try {
+      if (imageFile) fs.writeFileSync(imageFile, image.bytes, { mode: 0o600, flag: 'wx' })
       text = await new Promise((resolve, reject) => {
       const child = this.spawnProcess(spawnTarget.cmd, [...spawnTarget.argsPrefix, ...args], {
         windowsHide: true,
@@ -284,6 +288,9 @@ export class CodexExecAdapter {
       } catch {
         /* ignore */
       }
+      if (imageFile) {
+        try { fs.unlinkSync(imageFile) } catch { /* ignore */ }
+      }
     }
   }
 }
@@ -347,7 +354,7 @@ export class OpenAiCompatAdapter {
     return Boolean(this.secretStore?.get(this.secretName))
   }
 
-  async chat({ system, history = [], user, onDelta, onStatus, signal, timeoutMs = CHAT_TIMEOUT_MS }) {
+  async chat({ system, history = [], user, image = null, onDelta, onStatus, signal, timeoutMs = CHAT_TIMEOUT_MS }) {
     signal?.throwIfAborted()
     const apiKey = this.secretStore?.get(this.secretName)
     if (!apiKey) {
@@ -366,7 +373,13 @@ export class OpenAiCompatAdapter {
         content: m.ja && m.ja !== m.zh ? m.ja : m.zh || m.ja || '',
       })
     }
-    messages.push({ role: 'user', content: user })
+    messages.push({
+      role: 'user',
+      content: image ? [
+        { type: 'text', text: user },
+        { type: 'image_url', image_url: { url: `data:${image.mime};base64,${image.bytes.toString('base64')}` } },
+      ] : user,
+    })
 
     const reportStatus = (phase) => { try { onStatus?.(phase) } catch { /* UI progress is best-effort */ } }
     const deadline = AbortSignal.timeout(timeoutMs)

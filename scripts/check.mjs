@@ -20,7 +20,7 @@ import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, '..')
-const SKIP = /node_modules|[\\/]vendor[\\/]|[\\/]dist[\\/]|[\\/]work[\\/]/
+const SKIP = /node_modules|[\\/]vendor[\\/]|[\\/]dist[\\/]|[\\/]work[\\/]|[\\/]\.native-venv[\\/]|[\\/]__pycache__[\\/]/
 
 let failures = 0
 const report = (label, ok, detail = '') => {

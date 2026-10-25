@@ -181,9 +181,9 @@ export class AssetManager {
       packs,
       activeModel: model || null,
       activeRuntime: runtime || null,
-      ready: Boolean(model?.installed && runtime?.installed && runtime.matches),
+      ready: Boolean(model?.installed && (!runtime || (runtime.installed && runtime.matches))),
       degrade: model?.installed
-        ? runtime?.installed
+        ? !runtime || runtime?.installed
           ? null
           : 'missing-cubism2-runtime'
         : 'missing-model',

@@ -52,7 +52,7 @@ const SCHEMA = {
   'voice.ringVolume': (v) => (typeof v === 'number' && v >= 0 && v <= 1 ? v : undefined),
   'voice.motionSfx': (v) => (typeof v === 'boolean' ? v : undefined),
   'voice.stability': (v) => (typeof v === 'boolean' ? v : undefined),
-  'speechInput.provider': (v) => (['browser', 'api', 'none'].includes(v) ? v : undefined),
+  'speechInput.provider': (v) => (['windows-native', 'browser', 'api', 'none'].includes(v) ? v : undefined),
   'speechInput.lang': (v) => (typeof v === 'string' && v.length <= 16 ? v : undefined),
   'speechInput.apiModel': (v) => (typeof v === 'string' && v.length <= 60 ? v : undefined),
   'memory.enabled': (v) => (typeof v === 'boolean' ? v : undefined),

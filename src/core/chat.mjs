@@ -108,7 +108,7 @@ export class ChatEngine extends EventEmitter {
    * Run one turn. Returns immediately with a turnId; progress is delivered
    * through the emitted events so the HTTP layer can stream to the panel.
    */
-  startTurn({ sessionId, userText, workspace = null, origin = null }) {
+  startTurn({ sessionId, userText, image = null, workspace = null, origin = null }) {
     const turnId = `t${++this.turnSeq}-${Date.now().toString(36)}`
     // `origin` is the panel client that started the turn, so streaming deltas go
     // back to that tab only instead of every open tab.
@@ -125,7 +125,7 @@ export class ChatEngine extends EventEmitter {
       turn.status = 'running'
       turn.phase = 'preparing'
       this.emit('turn:status', { turnId, phase: turn.phase, origin })
-      await this.#runTurn(turn, { sessionId, userText, workspace, origin })
+      await this.#runTurn(turn, { sessionId, userText, image, workspace, origin })
     }).catch((e) => {
       turn.status = 'error'
       const cancelled = turn.controller.signal.aborted
@@ -153,7 +153,7 @@ export class ChatEngine extends EventEmitter {
     for (const t of settled.slice(0, this.turns.size - 50)) this.turns.delete(t.id)
   }
 
-  async #runTurn(turn, { sessionId, userText, workspace, origin }) {
+  async #runTurn(turn, { sessionId, userText, image, workspace, origin }) {
     turn.controller.signal.throwIfAborted()
     const text = String(userText ?? '').trim()
     if (text.length === 0) throw new Error('empty message')
@@ -190,6 +190,7 @@ export class ChatEngine extends EventEmitter {
       system,
       history,
       user: text,
+      image,
       signal: turn.controller.signal,
       onStatus: (phase) => {
         if (!['connecting', 'generating', 'retrying', 'reply'].includes(phase) || turn.phase === phase) return

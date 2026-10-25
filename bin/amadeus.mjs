@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { spawn } from 'node:child_process'
 import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -8,18 +7,14 @@ import { ensureDaemon, callDaemon, readDaemonInfo, ping } from '../src/host/daem
 import { readJsonl } from '../src/core/store.mjs'
 import { redactValue, redactLogLine } from '../src/core/redact.mjs'
 import { readOwnership, PRODUCT } from '../src/shared/layout.mjs'
+import { openPanel } from '../src/host/panel-launcher.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const DAEMON_ENTRY = path.join(HERE, 'amadeus-daemon.mjs')
-const PANEL_ENTRY = path.join(HERE, 'amadeus-panel.mjs')
 const paths = ensureDirs(resolvePaths())
 
 const cmd = process.argv[2] || 'status'
 const args = process.argv.slice(3)
-
-function panelUrl(info) {
-  return `http://127.0.0.1:${info.port}/amadeus/panel/index.html?token=${info.token}`
-}
 
 function printUsage() {
   console.log(
@@ -31,8 +26,7 @@ function printUsage() {
       '  start [--open]   start the daemon (and optionally open the panel)',
       '  stop             stop the daemon',
       '  status           show daemon status (default)',
-      '  open             open the panel window [--browser for a tab]',
-      '  url              print the one-time panel URL',
+      '  open             open the native Windows panel',
       '  doctor [--deep]  run capability diagnostics',
         '  report           write a redacted support report and print its path',
       '  sessions         list companion sessions',
@@ -41,19 +35,6 @@ function printUsage() {
       '  help             show this help',
     ].join('\n'),
   )
-}
-
-/**
- * The panel opens as its own application window by default; `--browser` keeps
- * the old behaviour for anyone who prefers a tab.
- */
-function openPanel(extra = []) {
-  const child = spawn(process.execPath, [PANEL_ENTRY, ...extra], {
-    detached: true,
-    stdio: 'ignore',
-    windowsHide: true,
-  })
-  child.unref()
 }
 
 async function ensureInfo() {
@@ -130,7 +111,7 @@ async function main() {
       const info = await ensureInfo()
       const opened = args.includes('--open')
       console.log(`Amadeus daemon ready on http://127.0.0.1:${info.port} (pid ${info.pid})`)
-      if (opened) openPanel(args.includes('--browser') ? ['--browser'] : [])
+      if (opened) await openPanel({ paths })
       break
     }
     case 'stop': {
@@ -154,14 +135,9 @@ async function main() {
       break
     }
     case 'open': {
-      const info = await ensureInfo()
-      openPanel(args.includes('--browser') ? ['--browser'] : [])
-      console.log(`Opening panel: http://127.0.0.1:${info.port}/amadeus/panel/`)
-      break
-    }
-    case 'url': {
-      const info = await ensureInfo()
-      console.log(panelUrl(info))
+      const result = await openPanel({ paths, browser: args.includes('--browser') })
+      console.log(result.ok ? `Amadeus native panel: ${result.status}` : `Amadeus native panel unavailable: ${result.status}`)
+      if (!result.ok) process.exitCode = 1
       break
     }
     case 'doctor': {

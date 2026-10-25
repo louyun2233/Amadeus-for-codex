@@ -32,8 +32,8 @@ some tool logic are derived from:
      pre-flight command, and a one-line command for importing your own
      character file.
 
-Bundled libraries (MIT, redistributed with this project)
---------------------------------------------------------
+Legacy web source (kept in the repository, excluded from the release ZIP)
+--------------------------------------------------------------------------
 
   - pixi.js 7.4.2 — https://github.com/pixijs/pixijs
     MIT License, Copyright (c) 2013-2023 Mathew Groves, Chad Engler
@@ -43,23 +43,34 @@ Bundled libraries (MIT, redistributed with this project)
     MIT License, Copyright (c) 2020 Guan
     See src/panel/vendor/LICENSE.pixi-live2d-display.txt
 
-  - Microsoft.Web.WebView2 SDK 1.0.3856.49 — https://www.nuget.org/packages/Microsoft.Web.WebView2
-    Copyright (c) Microsoft Corporation. The SDK's managed assemblies and
-    x64 WebView2Loader.dll are bundled to build the local desktop window.
-    See scripts/webview2/LICENSE.txt. The WebView2 Runtime is not bundled.
+The release ZIP does not include pixi.js, pixi-live2d-display, WebView2 SDK,
+or a Cubism 2 JavaScript runtime. The old web implementation remains in
+src/panel and scripts/webview2 in the source repository only.
+
+Release asset
+-------------
 
   - Amadeus application icon — scripts/Amadeus.ico
-    Supplied by the project maintainer from an earlier Amadeus application;
+    Converted into a multi-resolution Windows icon from the Amadeus logo
+    supplied by the project maintainer from an earlier Amadeus application;
     the maintainer confirmed permission to redistribute it. This statement
     does not grant rights to other character artwork or voice samples.
+  - Opening animation and call-screen logo — native/sprite_logo.png and
+    native/amadeus-logo.png. Copied from the Amadeus installation supplied by
+    the project maintainer. These assets are separate from the MIT code license.
 
-Not bundled (downloaded on demand into the user's own cache)
-------------------------------------------------------------
+Installed on the user's machine, not bundled in the release ZIP
+---------------------------------------------------------------
 
-  - live2d.min.js — the Live2D Cubism 2 web runtime. Copyright Live2D Inc.
-    It is not distributed with this project. The user either lets the tool
-    fetch it from a registered source (verified by SHA-256) or supplies the
-    file locally.
+  - PySide6 Essentials 6.12.0 — https://pyside.org
+    Qt for Python; LGPL-3.0-only OR GPL-2.0-only OR GPL-3.0-only.
+  - live2d-py 1.0.0 — https://github.com/Arkueid/live2d-py
+    MIT License; includes a native Cubism runtime subject to Live2D terms.
+  - PyOpenGL 3.1.10 — https://mcfletch.github.io/pyopengl/
+  - pythonnet 3.2.1 — https://pythonnet.github.io/
+
+The installer obtains these Python packages from the package index into a
+local virtual environment. Their package licenses and notices remain there.
 
 Character and asset rights
 --------------------------
@@ -68,9 +79,9 @@ Makise Kurisu, Steins;Gate and all related characters, names, voices and
 dialogue are the property of MAGES. / Nitroplus and their respective rights
 holders.
 
-Live2D models, Cubism Core runtime files and voice samples are NOT distributed
-with this project. They are downloaded on demand into the user's own data
-directory and are intended for personal, non-commercial study only.
+Live2D character models and voice samples are not distributed in the release
+ZIP. Models are downloaded on demand into the user's own data directory and
+are intended for personal, non-commercial study only.
 
 This project is not affiliated with OpenAI, MAGES., Nitroplus, or any of the
 upstream repositories listed above.

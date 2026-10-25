@@ -1,4 +1,6 @@
 /** Session creation and turn lifecycle endpoints for the panel. */
+import { parseChatImage } from '../core/chat-image.mjs'
+
 export function createChatRoutes({ guard, readBody, sendJson, sessions, chat, config, proactive, clientIdOf }) {
   return {
     'GET /amadeus/sessions': guard(async (req, res) => {
@@ -23,9 +25,10 @@ export function createChatRoutes({ guard, readBody, sendJson, sessions, chat, co
     }),
 
     'POST /amadeus/chat': guard(async (req, res, url) => {
-      const body = await readBody(req)
+      const body = await readBody(req, 6 * 1024 * 1024)
       const text = String(body?.text ?? '').trim()
-      if (text.length === 0) return sendJson(res, 400, { ok: false, error: 'missing text' })
+      const image = parseChatImage(body?.image)
+      if (text.length === 0 && !image) return sendJson(res, 400, { ok: false, error: 'missing text or image' })
       // Closed and missing sessions are history; a one-shot turn never resumes them.
       let requested = null
       if (body?.sessionId) {
@@ -43,7 +46,8 @@ export function createChatRoutes({ guard, readBody, sendJson, sessions, chat, co
       proactive?.noteInteraction({ text })
       const turnId = chat.startTurn({
         sessionId: session.id,
-        userText: text,
+        userText: text || '[图片]',
+        image,
         workspace: body?.workspace,
         origin: clientIdOf(req, url),
       })

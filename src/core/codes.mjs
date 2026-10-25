@@ -23,6 +23,7 @@ export const CODES = Object.freeze({
   DAEMON_POINTER_STALE: 'AM-1601',
   NOTIFY_HOOK_MISSING: 'AM-1602',
   PANEL_BROWSER_MISSING: 'AM-1701',
+  PANEL_NATIVE_MISSING: 'AM-1702',
 })
 
 /** Titles/actions are data, not UI copy: they are shown by `amadeus doctor`. */
@@ -40,6 +41,7 @@ export const CODE_NOTES = Object.freeze({
   [CODES.DAEMON_POINTER_STALE]: 'daemon.json pointed at a process that is gone',
   [CODES.NOTIFY_HOOK_MISSING]: 'the notify hook is not installed in Codex config',
   [CODES.PANEL_BROWSER_MISSING]: 'no Edge/Chrome executable was found for the panel',
+  [CODES.PANEL_NATIVE_MISSING]: 'the native Qt/OpenGL panel is not installed',
 })
 
 /** One degrade entry shape everywhere: code + capability + reason + action. */

@@ -2,7 +2,6 @@ import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
-import { fileURLToPath } from 'node:url'
 import { createAuth } from './auth.mjs'
 import { createChatRoutes } from './chat-routes.mjs'
 import { createMemoryRoutes } from './memory-routes.mjs'
@@ -17,8 +16,6 @@ import { taskLinePicker } from '../core/task-lines.mjs'
 import { log, createChildLogger } from '../shared/log.mjs'
 
 const logger = createChildLogger('[daemon]')
-const HERE = path.dirname(fileURLToPath(import.meta.url))
-const PANEL_DIR = path.resolve(HERE, '..', 'panel')
 const MAX_BODY = 1024 * 1024
 
 /**
@@ -57,43 +54,6 @@ function sendJson(res, status, body) {
     'Content-Length': Buffer.byteLength(data),
   })
   res.end(data)
-}
-
-/**
- * Panel entry without a valid session (stale token, daemon restarted under an
- * open window, cookie cleared). Raw text on a grey page reads as "the app is
- * broken"; this says what to do about it and offers a reload.
- */
-function sendPanelAuthPage(res, status) {
-  const forbidden = status === 403
-  const html = `<!doctype html><html lang="zh-CN"><meta charset="utf-8">
-<title>AMADEUS</title>
-<style>
-  html,body{height:100%;margin:0;background:#240d12;color:#f4e7e4;
-    font-family:"Microsoft YaHei UI","Segoe UI",system-ui,sans-serif;
-    display:flex;align-items:center;justify-content:center;text-align:center}
-  .box{max-width:280px;padding:18px}
-  h1{font-size:15px;letter-spacing:.08em;margin:0 0 8px}
-  p{font-size:12px;line-height:1.7;color:#b79b96;margin:0 0 14px}
-  button{font:inherit;font-size:12px;padding:6px 14px;border-radius:8px;cursor:pointer;
-    color:#1a0b0e;background:#e0604f;border:1px solid #f08a70}
-</style>
-<div class="box">
-  <h1>AMADEUS</h1>
-  <p>${
-    forbidden
-      ? '这个面板只能从本机访问。'
-      : '面板会话已失效（通常是 daemon 重启过）。<br>请用 amadeus open 或双击 Amadeus.exe 重新打开。'
-  }</p>
-  <button onclick="location.reload()">重新加载</button>
-</div>
-</html>`
-  res.writeHead(status, {
-    'Content-Type': 'text/html; charset=utf-8',
-    'Cache-Control': 'no-store',
-    'Content-Length': Buffer.byteLength(html),
-  })
-  res.end(html)
 }
 
 /**
@@ -149,16 +109,6 @@ async function readBody(req, max = MAX_BODY) {
 async function readRaw(req, max) {
   const raw = await collectBody(req, max)
   return Buffer.isBuffer(raw) ? raw : Buffer.from([])
-}
-
-/** Path traversal guard for every static asset route. */
-function safeJoin(root, rel) {
-  const decoded = decodeURIComponent(rel)
-  if (decoded.includes('\0')) return null
-  const full = path.resolve(root, '.' + path.posix.normalize('/' + decoded))
-  const rootResolved = path.resolve(root)
-  if (full !== rootResolved && !full.startsWith(rootResolved + path.sep)) return null
-  return full
 }
 
 export function createDaemon(deps) {
@@ -221,7 +171,8 @@ export function createDaemon(deps) {
         sessions: sessions.list().length,
         memory: memory.stats(),
         characterContent: deps.characterContent
-          ? { displayName: deps.characterContent.displayName, welcome: deps.characterContent.welcome, tapReactions: deps.characterContent.tapReactions }
+          ? { displayName: deps.characterContent.displayName, callName: deps.characterContent.callName,
+              welcome: deps.characterContent.welcome, tapReactions: deps.characterContent.tapReactions }
           : null,
       })
     }),
@@ -591,17 +542,11 @@ export function createDaemon(deps) {
     const url = new URL(req.url, `http://127.0.0.1:${port}`)
     const pathname = url.pathname
 
-    // static panel assets are still authenticated, but the HTML entry point may
-    // exchange ?token= for a cookie.
-    const isPanelEntry = pathname === '/' || pathname === '/amadeus/panel/' || pathname === '/amadeus/panel/index.html'
     const key = `${req.method} ${pathname}`
     const route = routes[key]
 
     const authResult = auth.check(req, url)
     if (!authResult.ok) {
-      if (isPanelEntry) {
-        return sendPanelAuthPage(res, authResult.status)
-      }
       return sendJson(res, authResult.status, { ok: false, error: authResult.reason })
     }
 
@@ -669,28 +614,6 @@ export function createDaemon(deps) {
         return sendJson(res, status, { ok: false, error: e.message })
       }
       return sendJson(res, 405, { ok: false, error: 'method not allowed' })
-    }
-
-    // static: /amadeus/panel/*  and  /  (redirect to index)
-    if (req.method === 'GET' && isPanelEntry) {
-      const location = authResult.kind === 'token-exchange' ? '/amadeus/panel/index.html' : null
-      if (location) {
-        res.writeHead(302, { Location: location, ...headers })
-        res.end()
-        return
-      }
-      return serveStatic(res, path.join(PANEL_DIR, 'index.html'), headers)
-    }
-
-    if (req.method === 'GET' && pathname.startsWith('/amadeus/panel/')) {
-      const rel = pathname.slice('/amadeus/panel/'.length)
-      const file = safeJoin(PANEL_DIR, rel)
-      if (!file) {
-        res.writeHead(404)
-        res.end('not found')
-        return
-      }
-      return serveStatic(res, file, headers)
     }
 
     if (req.method === 'GET' && pathname.startsWith('/amadeus/assets/')) {

@@ -29,7 +29,7 @@
     "stability": true
   },
   "speechInput": {
-    "provider": "browser",
+    "provider": "windows-native",
     "lang": "zh-CN",
     "apiModel": "whisper-1"
   },

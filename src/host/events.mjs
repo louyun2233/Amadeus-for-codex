@@ -245,6 +245,7 @@ export class EventHub extends EventEmitter {
   status() {
     return {
       clients: this.clients.size,
+      nativeClients: [...this.clients.keys()].filter((id) => id.startsWith('native-')).length,
       audioOwner: this.audioOwner,
       pendingUtterances: this.utterances.length,
       dropped: this.dropped.slice(-10),

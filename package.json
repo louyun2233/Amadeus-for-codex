@@ -1,6 +1,6 @@
 {
   "name": "amadeus-codex",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "private": true,
   "description": "Amadeus (Makise Kurisu) companion for Codex Desktop: Live2D panel + voice + memory",
   "type": "module",
@@ -19,20 +19,10 @@
     "mcp": "node bin/amadeus-mcp.mjs",
     "test": "node --test \"tests/**/*.test.mjs\"",
     "check": "node scripts/check.mjs",
-    "verify:api": "node scripts/verify-panel.mjs",
-    "verify:ui": "node scripts/ui/verify-ui.mjs",
-    "verify:call": "node scripts/ui/verify-call.mjs",
-    "verify:speech": "node scripts/ui/verify-speech.mjs",
     "verify:portable": "node scripts/portable-scan.mjs",
     "character:check": "node scripts/character-source.mjs",
     "character:apply": "node scripts/character-source.mjs --apply",
-    "verify:tabs": "node scripts/ui/verify-isolated-tabs.mjs",
-    "verify:tabs:isolated": "node scripts/ui/verify-isolated-tabs.mjs",
-    "verify:tabs:live": "node scripts/ui/verify-two-tabs.mjs",
     "dist": "node scripts/make-dist.mjs"
-  },
-  "devDependencies": {
-    "playwright-core": "^1.64.0"
   },
   "license": "MIT"
 }

@@ -1,31 +1,45 @@
 # Amadeus for Codex
 
-牧濑红莉栖（Makise Kurisu）数字伴侣，面向 **Codex Desktop**：
-红色翻盖手机面板 + Live2D + 日语语音 + 长期记忆 + 主动来电。
+面向 **Codex Desktop** 的牧濑红莉栖桌面伴侣。Amadeus 以红色翻盖手机呈现对话、Live2D、语音、长期记忆和主动来电；面板是 Windows 原生 Qt/OpenGL 窗口，不依赖浏览器或 WebView。
+
+| 功能 | 当前实现 |
+| --- | --- |
+| 桌面面板 | 开屏标识动画、Live2D 动作与表情、可拖动窗口；右下角拖动缩放，保持手机 15:26 的外形比例 |
+| 对话与任务 | 使用本机 Codex 连接；任务开始、完成和失败可按设置播报 |
+| 语音 | 可选本地 Qwen 克隆音色或其他已配置来源；克隆合成失败时不会静默换声；来电铃声单独设置 |
+| 记忆 | 会话与长期事实保存在本机，长期记忆默认关闭，可导出、删除与备份 |
+| 角色替换 | 在源文件中更换模型、人设、固定台词与默认声线，面板不提供角色切换入口 |
+
+Windows 原生面板需要 Node.js 22+、64 位 Python 3.11+ 和 Codex Desktop。**音色克隆不是安装面板的前置条件**；本地克隆需另行安装 Qwen TTS WebUI 并注册自己的参考音频。首次安装会联网安装 Python 依赖并下载角色模型。
 
 > **分享与隐私**：经过自动检查的发行压缩包不包含作者的 API Key、个人配置、聊天记忆、录音或克隆音频。请只分享运行 `npm run dist` 后生成的 `dist/amadeus-codex-<version>.zip`，不要直接压缩整个开发目录；安装后产生的数据和密钥只属于安装者。检查不能保证未来的修改或用户自己另行加入的文件绝对安全，发布前请重新运行 `npm run check` 与 `npm run dist`。
 
-> 状态：M0–M5 主体完成并实测通过（对话 / 语音 / 记忆 / 主动来电 / Live2D / 分发）；
-> 剩余待办见 `docs/STATUS.md`。
-> 功能设计、运行流程与边界见 [功能设计与说明](docs/功能设计与说明.md)；开发记录与剩余待办见 `docs/STATUS.md`。
+功能边界见 [功能设计与说明](docs/功能设计与说明.md)；开发记录见 [STATUS](docs/STATUS.md)。
 
 ## 快速开始
 
-Windows 桌面安装：先安装 Node.js 22+ 和 Microsoft Edge WebView2 Runtime，把发行 ZIP **完整解压**到固定目录，双击其中的 **`安装 Amadeus.cmd`**。它会用包内图标构建独立的 `Amadeus.exe` 窗口、注册 Codex 连接、检查并下载缺少的 Live2D 素材、打开面板，且立即启动本次登录的 Codex 监听；完成后重启 Codex Desktop。窗口由本机 WebView2 渲染，不会打开 Edge/Chrome 网页；只有显式传入 `--browser` 才在浏览器打开。不要直接在压缩包预览窗口里双击，也不要只提取单个脚本。音色克隆仍按 [使用教程](使用教程.md#3-从零制作本地克隆音色) 单独完成，不随安装器自动安装。离线时素材下载可稍后在面板内重试。
+1. 下载 [0.1.2 安装包](releases/amadeus-codex-0.1.2.zip)，或在 GitHub 选择 **Code → Download ZIP** 下载源码；将压缩包**完整解压**到固定目录。
+2. 确认 `node --version` 显示 22 或更新版本，`py -3 --version` 显示 3.11 或更新版本，并且安装的是 64 位 Python。
+3. 双击解压目录中的 **`安装 Amadeus.cmd`**。它会创建 `.native-venv`、安装原生面板依赖、构建 `Amadeus.exe`、注册 Codex 连接、启动服务并检查角色素材。
+4. 安装窗口提示完成后，重启 Codex Desktop。也可以双击 `Amadeus.exe` 单独打开面板。
+
+完整步骤、升级和排障见 [安装教程](docs/INSTALL.md)；从零制作本地克隆音色见 [使用教程](使用教程.md#3-从零制作本地克隆音色)。
 
 进阶用户才需要下面的命令：
 
 ```powershell
 node bin/amadeus.mjs doctor     # 能力自检
 node bin/amadeus.mjs start      # 启动常驻 daemon
-node bin/amadeus.mjs open       # 打开面板窗口（--browser 才用浏览器标签页）
+node bin/amadeus.mjs open       # 打开原生面板窗口
 node bin/amadeus.mjs status     # 查看状态
 node bin/amadeus.mjs stop       # 停止
 ```
 
-首次打开面板会显示可跳过的两步引导：先说明聊天、语音和录音的数据去向，再选择要启用的功能。以后可在「设置 → 使用引导」重新查看。
+新安装时语音朗读、任务播报、长期记忆和主动功能默认关闭；需要时在原生面板的「设置」页开启。
 
-**没有现成音色？**从参考音频开始安装本地 Qwen、注册克隆音色、配置来电铃声的完整步骤见 [使用教程.md](使用教程.md)。本体安装不要求 Python；本地克隆语音另需 Qwen TTS WebUI。用户提供的红莉栖提示音来源及使用限制见 [参考音频说明](docs/参考音频说明.md)；发行包不转载该音频。
+打开面板先在手机屏幕播放标识逐渐浮现的开机动画，随后显示 Live2D 与对话。拖动屏幕顶端状态区、转轴或机身边框可移动窗口；拖动**右下角斜线**可缩放窗口，手机外形维持 15:26，新的窗口仍从 300×520 开始。来电时可拖动屏幕空白处；点击 **CONNECT** 接听，点击底部圆键拒接。
+
+**没有现成音色？**从参考音频开始安装本地 Qwen、注册克隆音色、配置来电铃声的步骤见 [使用教程.md](使用教程.md)。桌面面板本身需要 Python；本地克隆语音另需 Qwen TTS WebUI。用户提供的红莉栖提示音来源及使用限制见 [参考音频说明](docs/参考音频说明.md)；发行包不转载该音频。
 
 **要换成自己的角色？**模型、人设、固定台词和默认声线在源文件中配置，不在页面端切换。按 [角色替换教程](docs/角色替换教程.md) 编辑、校验并应用到已有安装。
 
@@ -38,7 +52,8 @@ node bin/amadeus.mjs stop       # 停止
 | `bin/` | CLI、daemon、MCP、notify 入口 |
 | `src/core/` | 纯逻辑：配置、存储、记忆、会话、对话、语音、情绪、自检 |
 | `src/host/` | 宿主层：HTTP 服务、鉴权、事件总线、适配器 |
-| `src/panel/` | 面板前端（HTML/CSS/JS） |
+| `native/` | 原生 Qt/OpenGL 面板、Live2D、语音输入与播放 |
+| `src/panel/` | 旧网页面板源码，不进入发行包 |
 | `tests/` | `node:test` 单元测试 |
 | `config/` | 默认配置与资源清单 |
 | `persona/` | 人设文本与角色固定台词 |
@@ -49,9 +64,7 @@ node bin/amadeus.mjs stop       # 停止
 npm run check            # 一条命令前置检查：语法 + 分发清单 + 单元/契约测试
 npm test                 # 只跑测试（无网络、无浏览器）
 npm run dist             # 生成 dist/amadeus-codex-<version>.zip
-npm run verify:api       # 校验面板运行所需的每个 URL 都能取到
-npm run verify:ui        # 用系统 Edge/Chrome 无头渲染并截图（需先装素材）
-npm run verify:tabs      # 隔离数据的真实双窗口回归，不调用在线模型或语音
+.native-venv\Scripts\python.exe -m py_compile native\panel.py
 
 powershell -ExecutionPolicy Bypass -File scripts\verify-install.ps1   # 安装器全流程（隔离 CODEX_HOME）
 ```
@@ -75,7 +88,7 @@ node bin/amadeus.mjs assets install-file kurisu-model /path/to/kurisu.tar.gz
 1. **安装脚本（进阶）**：注册 MCP、校验发行包、准备数据目录，最后启动 daemon。普通 Windows 用户直接双击根目录的 `安装 Amadeus.cmd` 即可。
 
 ```powershell
-powershell -ExecutionPolicy Bypass -File scripts\install.ps1              # 只注册 MCP
+powershell -ExecutionPolicy Bypass -File scripts\install.ps1              # 注册连接、安装原生面板并启动服务
 powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Marketplace # 同时注册插件市场
 ```
 
@@ -93,16 +106,13 @@ codex plugin list --available                   # 确认可见
 发行文件的 `dist\marketplace` 再注册。市场条目在 `.agents/plugins/marketplace.json`，
 插件元数据在 `.codex-plugin/plugin.json`。
 
-**打开 Codex 时面板会自己出现**：一个 **300×520 的小弹窗**，窗口里就是那台翻盖手机
-（手机封顶 284×504，窗口再大也不会被拉伸；屏幕放不下时按屏幕高度的 72% 自动收窄）。
-关掉窗口即可收工，尺寸可用 `AMADEUS_PANEL_SIZE=W,H` 覆盖。这一条**不依赖 Codex
+**打开 Codex 时面板会自己出现**：新窗口默认 300×520；可拖动右下角斜线缩放，手机比例保持 15:26，最小 270×468。这一条**不依赖 Codex
 hooks**：Codex 连接 Amadeus MCP 时会直接打开面板；登录后启动的 watcher 每 3 秒检查一次，
 作为连接未建立时的备用路径。watcher 由隐藏的 VBS 守护，异常退出后会自动重启。一次 Codex
 会话只自动打开一次；手动关掉后不会因同一会话中新建 MCP 连接再次弹出。用 `-NoAutoStart`
 安装可以关闭自动打开。
 
-也可以随时手动打开：双击插件目录里的 `Amadeus.exe`（安装脚本用 Windows 自带编译器现编译，
-没编译器时生成 `Amadeus.cmd`），或 `node bin\amadeus.mjs open`。
+也可以随时手动打开：双击项目目录里的 `Amadeus.exe`（由安装脚本使用 Windows .NET Framework 编译器生成），或运行 `node bin\amadeus.mjs open`。若缺少编译器，安装会明确报错。
 
 ## 默认行为：她是个陌生人
 
@@ -127,18 +137,15 @@ Codex 守候程序在新一轮连携打开面板时，或用户双击 `Amadeus.e
 
 点击角色时，同一动作组会轮换不同的动作片段；空闲时的短句由当前选中的语音合成器朗读。生成或朗读回答时，点击仍有动作反馈，但不插入无关台词。Live2D 自带的原版语音不会自动播放。
 
-语音输入有两种通道，在面板「设置 → 语音输入」里切换：
+桌面面板通过 Windows 系统语音识别读取麦克风，无需浏览器。可在「设置」中启用或关闭麦克风；识别结果先进入输入框，确认后发送。
 
 | 取值 | 识别在哪 | 说明 |
 | --- | --- | --- |
-| `browser`（默认） | 浏览器 | 免本项目的密钥；浏览器可能使用在线识别服务，具体由浏览器决定 |
-| `api` | daemon → Whisper 兼容接口 | 需要语音密钥：面板里直接填，或设 `AMADEUS_STT_API_KEY` |
+| `windows-native`（默认） | Windows Speech Recognition | 使用系统已安装的识别语言与默认麦克风 |
+| `api`（仅旧配置兼容） | daemon → Whisper 兼容接口 | 原生面板首次连接时会迁移到 `windows-native` |
 | `none` | — | 关掉麦克风输入 |
 
-把 `AMADEUS_OPENAI_BASE_URL` 指向本机的 whisper 服务（whisper.cpp / faster-whisper / LM Studio 等）
-时密钥可以留空，**音频不出本机**；模型名用 `speechInput.apiModel` 覆盖（默认 `whisper-1`）。
-录音只经过内存，不写盘；日志里只记字节数，不记内容。配置了 `api` 但没配密钥时，
-面板会自动退回浏览器识别并在对话里说明原因，而不是让麦克风按钮变成死的。
+Windows 原生语音识别使用系统提供的识别器；没有对应语言包或麦克风权限时，面板会显示错误。旧版 `api`、`browser` 语音输入配置会迁移到 `windows-native`，不再调用网页录音功能。
 
 「系统播报」在未使用克隆音色时可选：面板没开时由操作系统语音念任务提示。选中 `qwen-local` 克隆音色时，这个开关禁用，以免 Windows/macOS/Linux 的另一种声线冒充角色；任务播报由打开的面板使用克隆声线完成。
 
@@ -164,7 +171,7 @@ Codex 守候程序在新一轮连携打开面板时，或用户双击 `Amadeus.e
 | --- | --- | --- |
 | 聊天文本 | 交给本机 Codex CLI；实际模型服务取决于你的 Codex 配置 | 发送到你配置的 OpenAI 兼容接口 |
 | 合成语音文本 | 新安装默认不发送；启用后由选中的音色来源处理 | 本地 Qwen（文本发往 `127.0.0.1:7860`）、阿里云百炼、Edge 或本机系统语音，具体由面板选择；本地克隆不会静默换声 |
-| 麦克风录音 | 交给浏览器识别；浏览器可能使用在线服务 | 发送到配置的转写接口；接口指向本机时音频留在本机 |
+| 麦克风录音 | 交给 Windows 已安装的语音识别器；结果留在输入框待确认 | 识别器能否工作取决于系统语言包与麦克风权限 |
 | 会话与长期记忆 | 保存在本机数据目录；长期记忆默认关闭 | 可从面板导出或删除 |
 | Live2D 素材 | 安装时从资源注册表中的地址下载并校验哈希 | 使用哈希匹配的本地素材文件 |
 

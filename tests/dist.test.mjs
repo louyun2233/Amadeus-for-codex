@@ -64,15 +64,13 @@ test('the runtime is shippable without node_modules', () => {
   }
 })
 
-test('the panel renders without node_modules', () => {
-  // vendored, MIT-licensed runtime pieces must be present and non-trivial
-  for (const rel of [
-    'src/panel/vendor/pixi-7.4.2.min.js',
-    'src/panel/vendor/pixi-live2d-display-0.4.0-cubism2.min.js',
-  ]) {
-    const size = fs.statSync(path.join(ROOT, rel)).size
-    assert.ok(size > 10000, `${rel} looks too small to be the real bundle (${size} bytes)`)
+test('native panel assets are packaged and web renderer is excluded', () => {
+  for (const rel of ['native/panel.py', ...manifest.requiredForInstall.filter((p) => p.startsWith('native/'))]) {
+    assert.ok(exists(rel), `${rel} is missing`)
+    assert.ok(coveredByInclude(rel), `${rel} is outside the archive`)
   }
+  assert.ok(manifest.exclude.includes('src/panel'))
+  assert.ok(manifest.exclude.includes('scripts/webview2'))
 })
 
 test('shell installer scripts are ASCII-only', () => {

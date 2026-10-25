@@ -45,7 +45,7 @@ export const RUNTIME_DATA_FILES = [
   'qwen-service.json',
 ]
 
-const TEXT_EXT = /\.(mjs|cjs|js|json|md|txt|ps1|cmd|vbs|cs|html|css|toml|yml|yaml|sha256)$/i
+const TEXT_EXT = /\.(mjs|cjs|js|json|md|txt|ps1|cmd|vbs|cs|py|html|css|toml|yml|yaml|sha256)$/i
 const PRIVATE_FILE = /(^|\/)(?:\.env(?:\.[^/]*)?|(?:config|secrets)\.json\.backup[^/]*|[^/]+\.(?:pem|key|p8|p12|pfx|sqlite3?|db|wav|mp3|flac|ogg|m4a|mp4|webm|zip|7z|rar))$/i
 const USER_PROFILE = /\b[a-z]:[\\/]+users[\\/]+([a-z0-9._-]+)/gi
 const EXAMPLE_USERS = new Set(['exampleuser', 'yourname', 'username', 'user', 'public', 'default'])
@@ -108,7 +108,7 @@ export function collect(dir, out = []) {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const full = path.join(current, entry.name)
       const rel = path.relative(dir, full).replace(/\\/g, '/')
-      if (/(^|\/)(?:node_modules|\.git|dist|work|panel-profile)(\/|$)/.test(rel)) continue
+      if (/(^|\/)(?:node_modules|\.native-venv|__pycache__|\.git|dist|work|panel-profile)(\/|$)/.test(rel)) continue
       if (entry.isDirectory()) visit(full)
       else if (entry.isFile()) out.push({ rel, abs: full })
     }
