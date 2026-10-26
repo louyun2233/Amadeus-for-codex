@@ -13,7 +13,7 @@
 
 ## 安装（发行包）
 
-1. 下载仓库中的 [0.1.2 安装包](../releases/amadeus-codex-0.1.2.zip)，或在 GitHub 选择 **Code → Download ZIP** 下载源码。把压缩包**完整解压**到固定目录（路径含空格也可以）；不要在压缩包预览窗口内运行脚本。
+1. 下载仓库中的 [0.1.3 安装包](../releases/amadeus-codex-0.1.3.zip)，或在 GitHub 选择 **Code → Download ZIP** 下载源码。把压缩包**完整解压**到固定目录（路径含空格也可以）；不要在压缩包预览窗口内运行脚本。
 2. 双击解压目录里的 **`安装 Amadeus.cmd`**。安装窗口会报告依赖安装、EXE 构建、Codex 注册、服务启动和角色素材的结果。安装完成后按任意键关闭安装窗口。
 3. 重启 Codex Desktop，让新 MCP 连接生效。此后可随 Codex 打开面板，或双击同一目录中的 `Amadeus.exe` 单独打开。
 
@@ -80,7 +80,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Marketplace
 ```toml
 [marketplaces.amadeus]
 source_type = "local"
-source = 'C:\path\to\amadeus-codex-0.1.2'
+source = 'C:\path\to\amadeus-codex-0.1.3'
 
 [plugins."amadeus@amadeus"]
 enabled = true

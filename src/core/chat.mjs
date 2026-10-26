@@ -189,7 +189,7 @@ export class ChatEngine extends EventEmitter {
     const res = await adapter.chat({
       system,
       history,
-      user: text,
+      user: image && text === '[图片]' ? '请描述这张图片的内容。' : text,
       image,
       signal: turn.controller.signal,
       onStatus: (phase) => {

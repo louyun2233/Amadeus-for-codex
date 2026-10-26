@@ -109,14 +109,59 @@ export function codexExecArgs({ cwd, outFile, model = '', imageFile = '' }) {
   return args
 }
 
+/** Keep a valid Codex preference; replace an unavailable inherited model only
+ * for this Amadeus call. The cache is supplied by the user's own Codex CLI. */
+export function selectCodexModel({ explicitModel = '', configText = '', models = [], image = false }) {
+  if (explicitModel) return explicitModel
+  const root = {}
+  for (const line of String(configText).split(/\r?\n/)) {
+    if (/^\s*\[/.test(line)) break
+    const match = line.match(/^\s*(model|model_provider)\s*=\s*["']([^"'\r\n]+)["']/)
+    if (match) root[match[1]] = match[2]
+  }
+  if (!root.model || (root.model_provider && root.model_provider !== 'openai')) return ''
+  const usable = (entry) => entry && entry.supported_in_api !== false &&
+    (!image || entry.input_modalities?.includes('image'))
+  if (models.some((entry) => entry.slug === root.model && usable(entry))) return ''
+  return models.find((entry) => entry.visibility !== 'hide' && usable(entry))?.slug || ''
+}
+
+function codexModelForCall({ explicitModel, image, env }) {
+  const home = env.CODEX_HOME || path.join(os.homedir(), '.codex')
+  try {
+    const configText = fs.readFileSync(path.join(home, 'config.toml'), 'utf8')
+    const cache = JSON.parse(fs.readFileSync(path.join(home, 'models_cache.json'), 'utf8'))
+    return selectCodexModel({ explicitModel, configText, models: cache.models, image })
+  } catch {
+    return explicitModel || ''
+  }
+}
+
+export function codexFailureFromLine(line) {
+  try {
+    const event = JSON.parse(line)
+    if (event.type !== 'error' && event.type !== 'turn.failed') return ''
+    const detail = event.error?.message || event.message || ''
+    let inner
+    try { inner = JSON.parse(detail) } catch { /* plain CLI message */ }
+    const code = inner?.error?.code || event.error?.code
+    if (code === 'model_not_found') return 'Amadeus 使用的 Codex 模型不可用；请检查模型设置。'
+    if (/image.{0,40}(?:not supported|unsupported)|(?:not supported|unsupported).{0,40}image/i.test(detail)) {
+      return '当前 Codex 模型不支持识图；请选用支持图片输入的模型。'
+    }
+  } catch { /* non-JSON CLI output */ }
+  return ''
+}
+
 /**
  * Chat adapter that reuses the user's Codex login and model through
  * `codex exec`. This is what makes the main path zero-API-key (Q29).
  *
  * Notes:
  * - `--ephemeral` keeps Amadeus conversation out of the user's Codex history.
- * - we do NOT pass `--ignore-user-config`: the user's model/provider setup is
- *   exactly what we want to reuse. An explicit -m only overrides the model.
+ * - we do NOT pass `--ignore-user-config`: reuse the user's auth and provider.
+ *   When an inherited model is absent from Codex's own available-model cache,
+ *   only this call receives a supported override; global settings stay intact.
  * - the run happens in a neutral empty directory so the companion cannot read
  *   the user's project just by being chatty.
  * - no flag can fully disable tool use, so the prompt contract forbids it and
@@ -161,12 +206,17 @@ export class CodexExecAdapter {
     const imageFile = image ? path.join(os.tmpdir(),
       `amadeus-image-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}${image.suffix}`) : ''
 
-    const cfgModel = model || this.getConfig?.()?.chat?.model
+    const cfgModel = codexModelForCall({
+      explicitModel: model || this.getConfig?.()?.chat?.model,
+      image: Boolean(image),
+      env,
+    })
     const args = codexExecArgs({ cwd: this.cwd, outFile, model: cfgModel, imageFile })
 
     const reportStatus = (phase) => { try { onStatus?.(phase) } catch { /* UI progress is best-effort */ } }
     let streamedText = ''
     let exitCode = null
+    let cliFailure = ''
     let text
     try {
       if (imageFile) fs.writeFileSync(imageFile, image.bytes, { mode: 0o600, flag: 'wx' })
@@ -228,6 +278,7 @@ export class CodexExecAdapter {
         const lines = stdout.split(/\r?\n/)
         const tail = lines.pop() || ''
         for (const line of lines) {
+          cliFailure ||= codexFailureFromLine(line)
           if (!sawEvent && line.trim().startsWith('{')) {
             try { JSON.parse(line); sawEvent = true; reportStatus('generating') } catch { /* partial line */ }
           }
@@ -252,6 +303,7 @@ export class CodexExecAdapter {
       })
       child.on('close', (code) => {
         exitCode = code
+        cliFailure ||= codexFailureFromLine(stdout)
         if (settled) {
           try { fs.unlinkSync(outFile) } catch { /* already removed */ }
           return
@@ -271,7 +323,8 @@ export class CodexExecAdapter {
       }
       if (!finalText) finalText = streamedText || scrapeAgentMessages(text)
       if (!finalText) {
-        const reason = exitCode !== 0 ? `codex exec exited with code ${exitCode}` : 'codex exec returned no assistant message'
+        const reason = cliFailure || (exitCode !== 0
+          ? `codex exec exited with code ${exitCode}` : 'codex exec returned no assistant message')
         throw new AmadeusError(ErrorCode.UNAVAILABLE, reason, { degrade: 'chat-no-reply' })
       }
       if (finalText.length > MAX_LLM_REPLY_CHARS) {
