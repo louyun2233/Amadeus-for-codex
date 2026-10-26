@@ -25,7 +25,7 @@ from windows_taskbar import set_process_identity, set_window_identity
 import live2d
 from OpenGL.GL import glViewport
 from PySide6.QtCore import QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QIcon, QLinearGradient, QPainter, QPen, QPixmap, QPolygonF
+from PySide6.QtGui import QColor, QCursor, QFont, QIcon, QLinearGradient, QPainter, QPen, QPixmap, QPolygonF
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
@@ -289,6 +289,21 @@ class ResizeGrip(QWidget):
 
 
 class GlossCallFrame(DraggableFrame):
+    def resizeEvent(self, event):
+        super().resizeEvent(event)
+        width, height = self.width(), self.height()
+        inset = max(14, round(width * 0.065))
+        if hasattr(self, "status_bar"):
+            self.status_bar.setGeometry(inset, 10, max(0, width - inset * 2), 22)
+            logo_top = round(height * 0.13)
+            logo_height = round(height * 0.33)
+            self.call_logo.setGeometry(inset, logo_top, max(0, width - inset * 2), logo_height)
+            self.call_label.setGeometry(inset, round(height * 0.60),
+                                        max(0, width - inset * 2), 30)
+            button_width = min(210, max(155, round(width * 0.64)))
+            self.connect_button.setGeometry((width - button_width) // 2,
+                                            round(height * 0.70), button_width, 42)
+
     def paintEvent(self, event):
         super().paintEvent(event)
         painter = QPainter(self)
@@ -307,6 +322,73 @@ class GlossCallFrame(DraggableFrame):
         painter.setPen(QPen(QColor(255, 216, 139, 7), 1))
         for y in range(3, height, 5):
             painter.drawLine(0, y, width, y)
+
+
+class CallStatusBar(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def paintEvent(self, event):
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.Antialiasing)
+        painter.setPen(QColor("#f1bc68"))
+        painter.setFont(QFont("Georgia", 11, QFont.Weight.Bold))
+        painter.drawText(QRect(0, 0, 30, self.height()), Qt.AlignmentFlag.AlignVCenter, "Xp")
+        painter.setPen(Qt.PenStyle.NoPen)
+        painter.setBrush(QColor("#57b4eb"))
+        right = self.width() - 4
+        painter.drawRoundedRect(QRectF(right - 16, 7, 15, 8), 1, 1)
+        painter.drawRect(QRectF(right - 1, 9, 2, 4))
+        for index, bar_height in enumerate((4, 7, 10, 13)):
+            painter.drawRect(QRectF(right - 55 + index * 9, 16 - bar_height, 7, bar_height))
+
+
+class CallLogo(QWidget):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.source = QPixmap(str(Path(__file__).with_name("amadeus-logo.png")))
+        self.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
+
+    def paintEvent(self, event):
+        if self.source.isNull():
+            return
+        painter = QPainter(self)
+        painter.setRenderHint(QPainter.RenderHint.SmoothPixmapTransform)
+        size = self.source.size().scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatio)
+        painter.drawPixmap((self.width() - size.width()) // 2,
+                           (self.height() - size.height()) // 2,
+                           size.width(), size.height(), self.source)
+
+
+class BlinkShortener:
+    """Replace prolonged two-eye closures in model motions with a quick blink."""
+
+    def __init__(self):
+        self.started = None
+        self.waiting_for_open = False
+        self.open_value = 1.0
+
+    def value(self, left, right, now):
+        if self.waiting_for_open:
+            if left >= 0.86 and right >= 0.86:
+                self.waiting_for_open = False
+                self.started = None
+                return None
+            elapsed = now - self.started
+            if elapsed < 0.065:
+                return self.open_value * (1 - elapsed / 0.065)
+            if elapsed < 0.085:
+                return 0.0
+            if elapsed < 0.185:
+                return min(1.0, (elapsed - 0.085) / 0.100)
+            return 1.0
+        if left < 0.75 and right < 0.75:
+            self.started = now
+            self.open_value = max(0.0, min(1.0, (left + right) / 2))
+            self.waiting_for_open = True
+            return self.open_value
+        return None
 
 
 class SpriteSplash(QWidget):
@@ -465,6 +547,9 @@ class Live2DView(QOpenGLWidget):
         self.last_motion = {}
         self.model_motions = {}
         self.model_expressions = []
+        self.blink = BlinkShortener()
+        self.eye_open_ids = None
+        self.eye_gaze_ids = None
         self.setMinimumHeight(0)
         self.setMouseTracking(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
@@ -473,7 +558,7 @@ class Live2DView(QOpenGLWidget):
     def initializeGL(self):
         live2d.glInit()
         self.gl_ready = True
-        self.startTimer(33)
+        self.frame_timer = self.startTimer(16, Qt.TimerType.PreciseTimer)
         self.gl_initialized.emit()
 
     def load(self, entry, motion_map, expression_map):
@@ -486,6 +571,16 @@ class Live2DView(QOpenGLWidget):
             self.model = live2d.Model()
             self.model.LoadModelJson(str(entry))
             self.model.Resize(self.width(), self.height())
+            self.blink = BlinkShortener()
+            param_ids = set(self.model.GetParamIds())
+            self.eye_open_ids = next((pair for pair in (
+                ("PARAM_EYE_L_OPEN", "PARAM_EYE_R_OPEN"),
+                ("ParamEyeLOpen", "ParamEyeROpen"),
+            ) if all(param in param_ids for param in pair)), None)
+            self.eye_gaze_ids = next((pair for pair in (
+                ("PARAM_EYE_BALL_X", "PARAM_EYE_BALL_Y"),
+                ("ParamEyeBallX", "ParamEyeBallY"),
+            ) if all(param in param_ids for param in pair)), None)
             self.model.SetAutoBlink(True)
             self.model.SetAutoBreath(True)
             self.motion_map = motion_map or {}
@@ -506,13 +601,32 @@ class Live2DView(QOpenGLWidget):
     def paintGL(self):
         live2d.clearBuffer()
         if self.model:
+            cursor = self.mapFromGlobal(QCursor.pos())
+            width, height = max(1, self.width()), max(1, self.height())
+            cursor_x = max(0, min(width, cursor.x()))
+            cursor_y = max(0, min(height, cursor.y()))
+            self.model.Drag(cursor_x, cursor_y)
             self.model.Update()
+            eye_x = cursor_x / width * 2 - 1
+            eye_y = 1 - cursor_y / height * 2
+            if self.eye_gaze_ids:
+                self.model.SetParamById(self.eye_gaze_ids[0], eye_x)
+                self.model.SetParamById(self.eye_gaze_ids[1], eye_y)
+            if self.eye_open_ids:
+                blink_value = self.blink.value(
+                    self.model.GetParamValueById(self.eye_open_ids[0]),
+                    self.model.GetParamValueById(self.eye_open_ids[1]), time.monotonic())
+                if blink_value is not None:
+                    self.model.SetParamById(self.eye_open_ids[0], blink_value)
+                    self.model.SetParamById(self.eye_open_ids[1], blink_value)
             if self.talking:
                 value = 0.25 + 0.35 * abs(math.sin((time.monotonic() - self.talk_start) * 15))
                 self.model.SetParamById("PARAM_MOUTH_OPEN_Y", value)
             self.model.Draw()
 
     def timerEvent(self, event):
+        if event.timerId() != self.frame_timer:
+            return super().timerEvent(event)
         if self.model and self.model.IsMotionFinished():
             self.model.StartRandomMotion(group="idle", priority=live2d.MotionPriority.IDLE)
         self.update()
@@ -569,8 +683,7 @@ class Live2DView(QOpenGLWidget):
         if getattr(self, "window_drag", False):
             self.window().drag_window(event.globalPosition().toPoint())
             return
-        if self.model:
-            self.model.Drag(event.position().x(), event.position().y())
+        event.accept()
 
     def mouseReleaseEvent(self, event):
         if getattr(self, "window_drag", False):
@@ -723,6 +836,7 @@ class Panel(QMainWindow):
         self.pending_events = []
         self.attachment = None
         self.call_item = None
+        self.call_mode = False
         self.ring_ticket = 0
         self.ring_cancel = threading.Event()
         self.audio_queue = []
@@ -774,10 +888,21 @@ class Panel(QMainWindow):
         if hasattr(self, "resize_grip"):
             self.resize_grip.move(self.width() - 20, self.height() - 20)
             self.resize_grip.raise_()
-        if hasattr(self, "screen"):
-            height = (max(380, self.height() - 55)
-                      if getattr(self, "booting", False) or getattr(self, "call_item", None)
-                      else round(self.height() * 190 / 520))
+        self._fit_screen()
+
+    def _fit_screen(self):
+        if not hasattr(self, "screen") or not hasattr(self, "hardware"):
+            return
+        full_screen = self.booting or self.call_mode
+        if full_screen:
+            self.phone_layout.setContentsMargins(1, 1, 1, 0)
+            self.phone_layout.setSpacing(0)
+            height = self.height() - 4 - 1 - self.hardware.height()
+        else:
+            self.phone_layout.setContentsMargins(7, 7, 7, 7)
+            self.phone_layout.setSpacing(5)
+            height = round(self.height() * 190 / 520)
+        if self.screen.height() != height:
             self.screen.setFixedHeight(height)
 
     def _build(self):
@@ -829,6 +954,7 @@ class Panel(QMainWindow):
         center = PhoneFrame()
         center.setObjectName("phone")
         root = QVBoxLayout(center)
+        self.phone_layout = root
         root.setContentsMargins(7, 7, 7, 7)
         root.setSpacing(5)
         screen = QFrame()
@@ -845,48 +971,21 @@ class Panel(QMainWindow):
         call = GlossCallFrame()
         call.setObjectName("callScreen")
         self.call_screen = call
-        call_layout = QVBoxLayout(call)
-        call_layout.setContentsMargins(18, 9, 18, 20)
-        call_layout.setSpacing(0)
-        call_signal = QHBoxLayout()
-        xp = QLabel("Xp")
-        xp.setStyleSheet("color:#f1bc68;background:transparent;font:bold 11px Georgia")
-        bars = QLabel("▂▄▆█  ▣")
-        bars.setStyleSheet("color:#57b4eb;background:transparent;font:10px Consolas")
-        xp.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        bars.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        call_signal.addWidget(xp)
-        call_signal.addStretch(1)
-        call_signal.addWidget(bars)
-        call_layout.addLayout(call_signal)
-        call_layout.addSpacing(27)
-        logo = QLabel()
-        source_logo = QPixmap(str(Path(__file__).with_name("amadeus-logo.png")))
-        logo.setPixmap(source_logo.scaled(238, 174, Qt.AspectRatioMode.KeepAspectRatio,
-                                         Qt.TransformationMode.SmoothTransformation))
-        logo.setAlignment(Qt.AlignmentFlag.AlignCenter)
-        logo.setFixedHeight(175)
-        logo.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        call_layout.addWidget(logo)
-        call_layout.addStretch(2)
-        self.call_label = QLabel("Call from Kurisu.")
+        call.status_bar = CallStatusBar(call)
+        call.call_logo = CallLogo(call)
+        self.call_label = QLabel("Call from Kurisu.", call)
         self.call_label.setObjectName("callText")
         self.call_label.setAttribute(Qt.WidgetAttribute.WA_TransparentForMouseEvents)
-        call_layout.addWidget(self.call_label)
-        call_layout.addSpacing(25)
-        accept = QPushButton("CONNECT")
+        call.call_label = self.call_label
+        accept = QPushButton("CONNECT", call)
         accept.setObjectName("connect")
-        accept.setFixedWidth(175)
-        accept.setFixedHeight(41)
+        call.connect_button = accept
         glow = QGraphicsDropShadowEffect(accept)
         glow.setBlurRadius(13)
         glow.setColor(QColor(255, 113, 18, 160))
         glow.setOffset(0)
         accept.setGraphicsEffect(glow)
         accept.clicked.connect(self.accept_call)
-        call_layout.addWidget(accept)
-        call_layout.setAlignment(accept, Qt.AlignHCenter)
-        call_layout.addStretch(3)
         self.top.addWidget(call)
         self.splash = SpriteSplash()
         self.splash.finished.connect(self._finish_boot)
@@ -971,7 +1070,7 @@ class Panel(QMainWindow):
         self.setCentralWidget(center)
         self.hinge.hide()
         self.keypad.hide()
-        self.screen.setFixedHeight(max(380, self.height() - 55))
+        self._fit_screen()
 
     def _build_chat(self):
         page = QWidget()
@@ -1248,10 +1347,10 @@ class Panel(QMainWindow):
         self.booting = False
         if self.top.currentWidget() == self.splash:
             self.top.setCurrentWidget(self.avatar)
-            self.screen.setFixedHeight(round(self.height() * 190 / 520))
             self.hinge.show()
             self.keypad.show()
             self.screen_header.show()
+            self._fit_screen()
             QTimer.singleShot(0, self._load_pending_model)
         if self.boot_status:
             self._welcome(self.boot_status)
@@ -1269,21 +1368,22 @@ class Panel(QMainWindow):
             self.status.setText("模型加载失败：" + str(error)[:45])
 
     def _set_call_mode(self, active):
+        self.call_mode = active
         if active:
             self.booting = False
             self.splash.stop()
             self.screen_header.hide()
             self.hinge.hide()
             self.keypad.hide()
-            self.screen.setFixedHeight(max(380, self.height() - 55))
+            self._fit_screen()
             self.top.setCurrentWidget(self.call_screen)
             self.hardware_key.setToolTip("拒接来电")
         else:
-            self.screen.setFixedHeight(round(self.height() * 190 / 520))
             self.hinge.show()
             self.keypad.show()
             self.top.setCurrentWidget(self.avatar)
             self.screen_header.show()
+            self._fit_screen()
             self.hardware_key.setToolTip("关闭 Amadeus")
             QTimer.singleShot(0, self._load_pending_model)
 
