@@ -6,6 +6,7 @@ import path from 'node:path'
 import {
   TaskWatcher,
   parseTaskEvent,
+  readSessionMeta,
   readSessionCwd,
   isOwnSessionCwd,
   newestRollouts,
@@ -60,6 +61,133 @@ test('the panel own chat is not a user task', () => {
     assert.equal(isOwnSessionCwd(readSessionCwd(mine), 'C:\\Users\\ExampleUser\\AppData\\Local\\Amadeus'), true)
     assert.equal(isOwnSessionCwd('C:\\Users\\ExampleUser\\AppData\\Local\\AmadeusBackup', 'C:\\Users\\ExampleUser\\AppData\\Local\\Amadeus'), false)
     assert.equal(isOwnSessionCwd('C:\\work\\project', 'C:\\Users\\ExampleUser\\AppData\\Local\\Amadeus'), false)
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('large Codex metadata still exposes its cwd and parent thread', () => {
+  const { root, day } = tempSessions()
+  try {
+    const file = path.join(day, 'rollout-long.jsonl')
+    fs.writeFileSync(file, `${JSON.stringify({
+      type: 'session_meta',
+      payload: { cwd: 'C:\\work\\project', parent_thread_id: 'parent', base_instructions: 'x'.repeat(24 * 1024) },
+    })}\n`)
+    assert.equal(readSessionCwd(file), 'C:\\work\\project')
+    assert.equal(readSessionMeta(file).parent_thread_id, 'parent')
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a new rollout announces its start on the first poll after priming', () => {
+  const { root, day } = tempSessions()
+  try {
+    const events = []
+    const watcher = new TaskWatcher({ sessionsRoot: root, onEvent: (event) => events.push(event) })
+    watcher.poll({ prime: true })
+    const file = rollout(day, 'new')
+    append(file, {
+      timestamp: new Date().toISOString(), type: 'event_msg',
+      payload: { type: 'task_started', turn_id: 'first-turn', root_turn_id: 'first-turn' },
+    })
+    watcher.poll()
+    assert.deepEqual(events.map((event) => `${event.kind}:${event.turnId}`), ['start:first-turn'])
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('a fast-growing rollout still announces the start outside its tail window', () => {
+  const { root, day } = tempSessions()
+  try {
+    const events = []
+    const watcher = new TaskWatcher({
+      sessionsRoot: root, tailBytes: 1024, onEvent: (event) => events.push(event),
+    })
+    watcher.poll({ prime: true })
+    const file = rollout(day, 'large-new')
+    append(file, {
+      timestamp: new Date().toISOString(), type: 'event_msg',
+      payload: { type: 'task_started', turn_id: 'fast-turn' },
+    })
+    append(file, { type: 'event_msg', payload: { type: 'reasoning', text: 'x'.repeat(20_000) } })
+    watcher.poll()
+    assert.deepEqual(events.map((event) => `${event.kind}:${event.turnId}`), ['start:fast-turn'])
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('an older rollout first discovered after priming does not replay its task', () => {
+  const { root, day } = tempSessions()
+  try {
+    const file = rollout(day, 'old-unseen')
+    append(file, {
+      timestamp: new Date(Date.now() - 60_000).toISOString(), type: 'event_msg',
+      payload: { type: 'task_complete', turn_id: 'past-turn' },
+    })
+    const events = []
+    let visible = false
+    const watcher = new TaskWatcher({
+      sessionsRoot: root,
+      listFiles: () => visible ? [{ file, mtime: Date.now() }] : [],
+      onEvent: (event) => events.push(event),
+    })
+    watcher.poll({ prime: true })
+    visible = true
+    watcher.poll()
+    assert.deepEqual(events, [])
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('large panel metadata prevents its own task from being announced', () => {
+  const { root, day } = tempSessions()
+  try {
+    const dataRoot = 'C:\\Users\\ExampleUser\\AppData\\Local\\Amadeus'
+    const file = path.join(day, 'rollout-own-long.jsonl')
+    fs.writeFileSync(file, `${JSON.stringify({
+      type: 'session_meta', payload: {
+        cwd: `${dataRoot}\\runtime\\chatcwd`, base_instructions: 'x'.repeat(24 * 1024),
+      },
+    })}\n`)
+    const events = []
+    const watcher = new TaskWatcher({ sessionsRoot: root, dataRoot, onEvent: (event) => events.push(event) })
+    watcher.poll({ prime: true })
+    append(file, {
+      timestamp: new Date().toISOString(), type: 'event_msg',
+      payload: { type: 'task_complete', turn_id: 'own-turn' },
+    })
+    watcher.poll()
+    assert.deepEqual(events, [])
+  } finally {
+    fs.rmSync(root, { recursive: true, force: true })
+  }
+})
+
+test('subagent rollouts stay quiet while two independent Desktop tasks are both seen', () => {
+  const { root, day } = tempSessions()
+  try {
+    const first = rollout(day, 'first')
+    const second = rollout(day, 'second')
+    const helper = path.join(day, 'rollout-helper.jsonl')
+    fs.writeFileSync(helper, `${JSON.stringify({
+      type: 'session_meta', payload: { cwd: 'C:\\work\\project', parent_thread_id: 'first' },
+    })}\n`)
+    const events = []
+    const watcher = new TaskWatcher({ sessionsRoot: root, onEvent: (event) => events.push(event) })
+    watcher.poll({ prime: true })
+    for (const [file, id] of [[first, 'first'], [second, 'second'], [helper, 'helper']]) {
+      append(file, {
+        timestamp: new Date().toISOString(), type: 'event_msg',
+        payload: { type: 'task_started', turn_id: id, root_turn_id: id === 'helper' ? 'first' : id },
+      })
+    }
+    watcher.poll()
+    assert.deepEqual(events.map((event) => event.turnId).sort(), ['first', 'second'])
   } finally {
     fs.rmSync(root, { recursive: true, force: true })
   }
@@ -158,7 +286,9 @@ test('the live thread is found even when it lives in an older folder', () => {
     fs.mkdirSync(oldDay, { recursive: true })
     fs.mkdirSync(newDay, { recursive: true })
     const live = path.join(oldDay, 'rollout-live.jsonl')
-    fs.writeFileSync(live, '{}\n')
+    fs.writeFileSync(live, `${JSON.stringify({
+      type: 'session_meta', payload: { cwd: 'C:\\work\\project' },
+    })}\n`)
     const now = Date.now() / 1000
     fs.utimesSync(live, now, now)
     // several finished sessions in the newer folder, all slightly older

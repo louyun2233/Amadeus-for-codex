@@ -8,9 +8,10 @@ const logger = createChildLogger('[chat]')
 
 const EXTRACT_PROMPT = `分析下面的对话，提取值得长期记住的用户信息。
 
-只提取长期有效的事实：称呼、职业、长期偏好、习惯、重要关系、已经发生的人生节点。
+只提取长期有效的事实：称呼、职业、长期偏好、习惯、重要关系、持续进行的研究或项目、长期目标、已经发生的人生节点。
 不要提取：当前动作（在吃饭/在忙）、当天计划、寒暄、情绪化的临时状态。
 只根据用户原话提取，不得把 Amadeus 的回答、推测或提问当作用户事实；不得补充原话没有的信息。
+每条事实尽量摘录用户原句中的连续片段，不要把原句改写成猜测。
 判断标准：这条信息一周后还有意义吗？没有就不要。
 
 每条一行，格式：- [事实] 内容
@@ -39,7 +40,16 @@ function toHistory(messages) {
 
 /** Avoid a second model call for greetings and questions with no user fact to retain. */
 export function mayContainLongTermFact(text) {
-  return /(?:我|咱|俺|本人|我们).{0,24}(?:是|叫|姓|住|有|喜欢|讨厌|习惯|过敏|从事|工作|一直|长期|以后|今后)|(?:请叫我|记住我|别忘了我)/.test(String(text || ''))
+  const value = String(text || '')
+  return /(?:我|咱|俺|本人|我们).{0,24}(?:是|叫|姓|住|有|喜欢|讨厌|习惯|过敏|从事|工作|一直|长期|以后|今后)|(?:请叫我|记住我|别忘了我|记住这件事|请记下)/.test(value) ||
+    /(?:我|我们).{0,12}(?:在做|研究|开发|训练|制作).{0,18}(?:实验|研究|项目|课题|产品|软件|论文|模型|机器人)/.test(value)
+}
+
+/** A broad recall request has no lexical overlap with the facts it asks for. */
+export function asksForMemoryOverview(text) {
+  const value = String(text || '').replace(/[\s，。！？?!]/g, '')
+  return /(?:你|妳)(?:还|都|仍然)?记得我(?:吗|的哪些事|什么|多少|哪些事)?$/.test(value) ||
+    /关于我(?:你|妳).{0,3}记得(?:什么|哪些事)/.test(value)
 }
 
 /** Reject extracted details that cannot be traced back to a user's own words. */
@@ -113,7 +123,7 @@ export class ChatEngine extends EventEmitter {
     // `origin` is the panel client that started the turn, so streaming deltas go
     // back to that tab only instead of every open tab.
     const turn = {
-      id: turnId, sessionId, status: 'queued', text: '', error: null,
+      id: turnId, sessionId, status: 'queued', text: '', error: null, closed: false,
       phase: 'queued', startedAt: Date.now(), firstDeltaAt: null,
       durationMs: null, origin, controller: new AbortController(),
     }
@@ -135,8 +145,21 @@ export class ChatEngine extends EventEmitter {
       const candidate = cancelled ? 'cancelled' : e?.degrade
       const reason = typeof candidate === 'string' && /^[a-z0-9-]{1,40}$/.test(candidate)
         ? candidate : 'chat-failed'
+      let closed = false
+      if (this.config.getPath('chat.oneshot') === true) {
+        try {
+          this.sessions.close(sessionId)
+          closed = true
+        } catch (closeError) {
+          logger.warn('failed to close a failed one-shot session:', closeError?.message || closeError)
+        }
+      }
       this.audit?.record({ source: 'chat', tool: 'turn.error', summary: `${turnId} ${reason} ${turn.durationMs}ms` })
-      this.emit('turn:error', { turnId, error: turn.error, code: cancelled ? 'cancelled' : e?.code, reason, origin })
+      turn.closed = closed
+      this.emit('turn:error', {
+        turnId, sessionId, closed, error: turn.error,
+        code: cancelled ? 'cancelled' : e?.code, reason, origin,
+      })
     })
     this.sessionQueues.set(sessionId, run)
     run.finally(() => {
@@ -169,6 +192,11 @@ export class ChatEngine extends EventEmitter {
     const recalled = memoryOn
       ? this.memory.search(text, { k: this.#maxMemories(), namespace: 'panel', types: ['fact', 'emotion', 'summary'] })
       : []
+    if (memoryOn && recalled.length === 0 && asksForMemoryOverview(text)) {
+      recalled.push(...this.memory.list('panel', {
+        limit: 6, types: ['fact', 'emotion', 'summary'],
+      }))
+    }
     const recap = memoryOn ? this.memory.list('panel', { limit: 1, types: ['recap'] })[0] : null
 
     const system = buildSystemPrompt({
@@ -232,6 +260,7 @@ export class ChatEngine extends EventEmitter {
         logger.warn('failed to close a one-shot session:', e && e.message ? e.message : e)
       }
     }
+    turn.closed = closed
     this.emit('turn:done', { turnId: turn.id, sessionId, origin, closed, ...parsed })
     const firstMs = turn.firstDeltaAt === null ? 'none' : `${turn.firstDeltaAt - turn.startedAt}ms`
     this.audit?.record({ source: 'chat', tool: 'turn.done', summary: `${turn.id} ${turn.durationMs}ms first=${firstMs}` })

@@ -225,12 +225,9 @@ const taskWatcher = new TaskWatcher({
   sessionsRoot: process.env.AMADEUS_CODEX_SESSIONS || path.join(os.homedir(), '.codex', 'sessions'),
   dataRoot: paths.dataRoot,
   onEvent: ({ kind, turnId }) => {
-    const { nested } = activeTurns.observe({ kind, turnId })
-    if (nested) {
-      audit.record({ source: 'task-watch', tool: `task.nested-${kind}`, summary: String(turnId || '').slice(0, 12) })
-      log.info(`[task-watch] ${kind} ${String(turnId).slice(0, 8)} is nested; staying quiet`)
-      return
-    }
+    // Rollout metadata identifies subagents directly. Independent Desktop
+    // chats may overlap, so overlap alone must not silence either task.
+    activeTurns.observe({ kind, turnId })
     const said = announceTask(kind, { turnId, source: 'task-watch' })
     if (!said) log.info(`[task-watch] ${kind} ${String(turnId).slice(0, 8)} not announced`)
   },

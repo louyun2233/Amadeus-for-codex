@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { EventHub } from '../src/host/events.mjs'
+import { EventHub, MAX_PENDING_UTTERANCES, MAX_PENDING_SPEECH_CHARS } from '../src/host/events.mjs'
 
 /**
  * Audio ownership.
@@ -225,4 +225,30 @@ test('sendTo reaches exactly one client', () => {
   assert.equal(b.of('chunk').length, 1)
   assert.equal(a.of('chunk').length, 0)
   assert.equal(hub.sendTo('tab-zzz', 'chunk', {}), false)
+})
+
+test('a long reply batch keeps all 100 segments through initial delivery and receipt', () => {
+  const { hub, a } = setup()
+  const lines = Array.from({ length: 100 }, (_, index) => ({ text: `説明${index}。`, emotion: 'thinking' }))
+  const queued = hub.enqueueUtterances(lines)
+  assert.equal(queued.length, lines.length)
+  assert.equal(hub.status().pendingUtterances, lines.length)
+  assert.deepEqual(a.of('utterance').map(event => event.data.text), lines.map(line => line.text))
+  assert.deepEqual(hub.status().dropped, [])
+  for (const line of queued) hub.ack(line.id, 'accepted')
+  assert.equal(hub.status().pendingUtterances, 0)
+})
+
+test('over-capacity batches reject atomically without evicting the existing first line', () => {
+  for (const excess of [Array.from({ length: MAX_PENDING_UTTERANCES }, () => ({ text: '次の文。' })),
+    [{ text: 'あ'.repeat(MAX_PENDING_SPEECH_CHARS) }]]) {
+    const { hub, a } = setup()
+    const first = hub.enqueueUtterance({ text: '既に待っている文。' })
+    const rejected = hub.enqueueUtterances(excess)
+    assert.deepEqual(rejected, [])
+    assert.equal(hub.status().pendingUtterances, 1)
+    assert.equal(hub.utterances[0].id, first.id)
+    assert.equal(a.of('utterance').length, 1)
+    assert.equal(a.of('degraded').length, 1)
+  }
 })

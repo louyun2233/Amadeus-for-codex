@@ -2,17 +2,18 @@ import { EventEmitter } from 'node:events'
 
 const ACK_TIMEOUT_MS = 20000
 const MAX_ATTEMPTS = 3
+export const MAX_PENDING_UTTERANCES = 512
+export const MAX_PENDING_SPEECH_CHARS = 64000
 
 /**
  * How long a "task finished" line stays worth saying.
  *
  * Announcements are news, not history: if the panel was closed when the task
  * ended, replaying it on the next connection would report a completion at a
- * moment that has nothing to do with the task - reported as "she says it too
- * early". The window is generous so a notice that merely waited behind a long
- * spoken reply is still delivered.
+ * moment that has nothing to do with the task. A one-minute window allows a
+ * brief reconnect, but keeps an old task line from playing after the next boot.
  */
-export const ANNOUNCEMENT_MAX_AGE_MS = 5 * 60 * 1000
+export const ANNOUNCEMENT_MAX_AGE_MS = 60 * 1000
 
 /**
  * Server->panel event stream over SSE, plus an utterance queue with explicit
@@ -138,19 +139,30 @@ export class EventHub extends EventEmitter {
   }
 
   /** Queue a line of speech and deliver it to every connected panel. */
-  enqueueUtterance({ text, cn = '', emotion = 'neutral', expr = '', kind = 'say', force = true }) {
-    const clean = String(text ?? '').trim()
-    if (clean.length === 0) return null
-    const item = {
-      id: ++this.utteranceSeq,
-      payload: { id: this.utteranceSeq, kind, text: clean, cn, emotion, expr, force, ts: Date.now() },
-      attempts: 0,
-      lastSentAt: null,
+  enqueueUtterance(line) {
+    return this.enqueueUtterances([line])[0] || null
+  }
+
+  /** Admit an entire reply before delivery; never evict its first sentences. */
+  enqueueUtterances(lines) {
+    const payloads = []
+    for (const { text, cn = '', emotion = 'neutral', expr = '', kind = 'say', force = true } of lines) {
+      const clean = String(text ?? '').trim()
+      if (clean) payloads.push({ kind, text: clean, cn, emotion, expr, force, ts: Date.now() })
     }
-    this.utterances.push(item)
-    if (this.utterances.length > 60) this.#drop(this.utterances.shift(), 'queue overflow')
-    this.#deliverUtterance(item)
-    return item.payload
+    const chars = this.utterances.reduce((sum, item) => sum + item.payload.text.length, 0) +
+      payloads.reduce((sum, payload) => sum + payload.text.length, 0)
+    if (this.utterances.length + payloads.length > MAX_PENDING_UTTERANCES || chars > MAX_PENDING_SPEECH_CHARS) {
+      this.#drop({ id: null }, '语音队列容量不足，本批语音未加入；文字回复仍完整保留')
+      return []
+    }
+    const items = payloads.map((payload) => {
+      const id = ++this.utteranceSeq
+      return { id, payload: { id, ...payload }, attempts: 0, lastSentAt: null }
+    })
+    this.utterances.push(...items)
+    for (const item of items) this.#deliverUtterance(item)
+    return items.map((item) => item.payload)
   }
 
   /** Speech goes to the audio owner only. No owner means it stays queued. */

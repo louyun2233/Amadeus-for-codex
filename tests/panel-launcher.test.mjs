@@ -41,13 +41,14 @@ test('a dead port is not opened as a panel', async () => {
   assert.equal(await panelAnswers({ port, token: 'tok' }), false)
 })
 
-test('concurrent launch attempts share a short cooldown', () => {
+test('concurrent launch attempts share a cooldown long enough for a cold native panel', () => {
   const paths = tempPaths()
   try {
     assert.equal(launchInFlight(paths), false)
     const lock = path.join(paths.runtimeDir, 'panel-launch.lock')
     fs.writeFileSync(lock, 'x')
     assert.equal(launchInFlight(paths), true)
+    assert.equal(launchInFlight(paths, { now: Date.now() + 20_000 }), true)
     assert.equal(launchInFlight(paths, { now: Date.now() + 60_000 }), false)
   } finally {
     cleanup(paths)

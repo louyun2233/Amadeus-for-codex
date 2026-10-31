@@ -1,9 +1,13 @@
 import { EMOTION_EXPR } from '../core/emotion.mjs'
+import { splitLocalSpeech } from '../core/parse.mjs'
 
 /** Connect a conversation engine to the panel event stream. */
 export function wireChatEvents({ chat, hub, config, memory, log }) {
   const sendToOrigin = (origin, event, payload) => {
-    if (origin && hub.sendTo(origin, event, payload)) return
+    if (origin) {
+      hub.sendTo(origin, event, payload)
+      return
+    }
     hub.broadcast(event, payload)
   }
 
@@ -27,14 +31,16 @@ export function wireChatEvents({ chat, hub, config, memory, log }) {
       closed: evt.closed,
     })
     if (config.getPath('voice.enabled') !== true) return
+    const lines = []
+    const local = config.getPath('voice.provider') === 'qwen-local'
     for (const segment of evt.segments || []) {
-      hub.enqueueUtterance({
-        text: segment.text,
-        emotion: segment.emotion,
-        expr: EMOTION_EXPR[segment.emotion] || '',
-        kind: 'say',
-      })
+      for (const text of local ? splitLocalSpeech(segment.text) : [segment.text]) {
+        lines.push({ text, emotion: segment.emotion,
+          expr: EMOTION_EXPR[segment.emotion] || '', kind: 'say' })
+      }
     }
+    if (hub.enqueueUtterances) hub.enqueueUtterances(lines)
+    else for (const line of lines) hub.enqueueUtterance(line)
   })
   chat.on('message:appended', (evt) => hub.broadcast('session:append', evt))
   chat.on('memory:changed', (evt) => hub.broadcast('memory', { ...evt, ...memory.stats() }))

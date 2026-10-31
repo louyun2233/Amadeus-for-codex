@@ -147,6 +147,7 @@ export class ProactiveScheduler {
     this.characterContent = characterContent
     this.personaText = personaText
     this.inFlight = false
+    this.interactionVersion = 0
   }
 
   /**
@@ -157,6 +158,7 @@ export class ProactiveScheduler {
    * and forth means she is engaged right now.
    */
   noteInteraction({ text = '' } = {}) {
+    this.interactionVersion += 1
     const now = this.clock()
     const state = this.state
     const previous = typeof state.lastUserAt === 'number' ? state.lastUserAt : 0
@@ -274,7 +276,6 @@ export class ProactiveScheduler {
     state.lastUserAt = now
     if (kind === 'call') {
       state.lastCallAt = now
-      state.callCount = (state.callCount || 0) + 1
     }
     this.persist(state)
 
@@ -283,24 +284,31 @@ export class ProactiveScheduler {
     // guard would disappear if the gap were ever configured to zero.
     this.inFlight = true
     try {
-      await this.#deliverLine(kind)
+      const delivered = await this.#deliverLine(kind, this.interactionVersion)
+      if (!delivered) return { action: 'none', reason: 'delivery-cancelled' }
+      if (kind === 'call') {
+        state.callCount = (state.callCount || 0) + 1
+        this.persist(state)
+      }
     } finally {
       this.inFlight = false
     }
     return { action: kind, reason: 'due' }
   }
 
-  async #deliverLine(kind) {
+  async #deliverLine(kind, interactionVersion) {
     const system = `${this.personaText}\n\n${kind === 'call' ? CALL_SYSTEM : IDLE_SYSTEM}`
     const fallback = pick(kind === 'call' ? this.characterContent.callCanned : this.characterContent.idleCanned)
 
     let line = null
+    let timeout
     try {
       const raw = await Promise.race([
         this.complete(system),
-        new Promise((_, reject) =>
-          setTimeout(() => reject(new Error('line generation timed out')), GENERATE_TIMEOUT_MS).unref?.(),
-        ),
+        new Promise((_, reject) => {
+          timeout = setTimeout(() => reject(new Error('line generation timed out')), GENERATE_TIMEOUT_MS)
+          timeout.unref?.()
+        }),
       ])
       const parsed = this.parse(raw)
       if (parsed && (parsed.jp || parsed.cn)) {
@@ -314,14 +322,26 @@ export class ProactiveScheduler {
       }
     } catch (e) {
       this.report('warn', `${kind} line generation failed`, e && e.message ? e.message : String(e))
+    } finally {
+      clearTimeout(timeout)
     }
 
     if (!line) line = { jp: fallback.jp, cn: fallback.cn, emotion: fallback.emotion }
 
+    // Generating a line can take tens of seconds. A user who started chatting,
+    // disabled the feature or closed the panel during that time must not get
+    // interrupted by the previously scheduled call when generation finishes.
+    const cfg = this.config.get()
+    const enabled = kind === 'call' ? cfg.proactive?.callEnabled : cfg.proactive?.idleEnabled
+    if (cfg.voice?.enabled !== true || enabled !== true || !this.hasAudience() ||
+        this.isBusy() || interactionVersion !== this.interactionVersion) return false
+
     try {
-      this.deliver({ kind, ...line })
+      await this.deliver({ kind, ...line })
+      return true
     } catch (e) {
       this.report('error', `${kind} delivery failed`, e && e.message ? e.message : String(e))
+      return false
     }
   }
 }

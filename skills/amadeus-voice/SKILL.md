@@ -15,8 +15,8 @@ amadeus_say({ text: "おはよう。今日も頑張りましょう。", emotion:
 
 要点：
 
-- 默认需要预先授权。若返回 `code: "needs_confirmation"`，如实告诉用户需要在面板设置里打开「允许模型主动发声」，不要重试。
-- 语音只在面板打开且浏览器允许播放时出声。第一次播放可能被浏览器的自动播放策略拦截，面板会提示点击启用。
+- 默认需要预先授权。若返回 `code: "needs_confirmation"`，如实告诉用户需要在面板设置里打开「允许 Codex 发声」，不要重试。
+- 语音通过原生 Windows 面板播放。检查面板连接、语音开关及所选合成服务；原生面板没有浏览器自动播放授权步骤。
 - emotion 只能取：`happy excited elated sad angry furious question soft blush annoyed thinking surprised disappointed eyes_closed indifferent side winking neutral`。
 
 ## 让她主动打过来
@@ -25,16 +25,16 @@ amadeus_say({ text: "おはよう。今日も頑張りましょう。", emotion:
 amadeus_call({ reason: "用户半小时前说想被提醒" })
 ```
 
-和 `amadeus_say` 一样默认需要预先授权（面板设置里的「允许模型触发来电」）。
-区别是它会拉起来电浮层，铃声与接听/拒接按钮都会出现。
+和 `amadeus_say` 一样默认需要预先授权（面板设置里的「允许 Codex 来电」）。
+来电会显示 CONNECT 接听按钮；底部圆键用于拒接，铃声由本机独立提示音提供。
 
 ## 没声音时
 
 依次确认，并报告具体是哪一步失败：
 
-1. `amadeus_capabilities` → 语音 provider 与缓存状态。
+1. `amadeus_status` 查看语音 provider 与缓存状态，`amadeus_capabilities` 查看能力诊断。
 2. 深层自检会真实合成一句 `テスト`，能直接区分「网络不通」和「音色/参数问题」。
-3. 面板是否打开、是否处于静音、浏览器是否拦截自动播放。
+3. 原生面板是否连接、语音是否启用、Windows 音量与输出设备是否可用。
 
 ## 设计约束
 

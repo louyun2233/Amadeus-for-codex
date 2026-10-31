@@ -136,7 +136,7 @@ async function tick() {
     // The daemon restarted, which invalidates the page's session cookie and
     // usually leaves a grey "can't reach" window behind. Replace it with a
     // fresh one instead of leaving a half-broken page on screen.
-    const result = await openPanel({ paths, force: true })
+    const result = await openPanel({ paths })
     log(`daemon was gone; reopened the panel (${result.status})`)
     return
   }
@@ -145,7 +145,7 @@ async function tick() {
     launchAttempts += 1
     lastLaunchAt = now
     panelServedSinceLaunch = false
-    const result = await openPanel({ paths, force: true })
+    const result = await openPanel({ paths })
     log(`Codex was updated; reopened the panel (${result.status})`)
     return
   }

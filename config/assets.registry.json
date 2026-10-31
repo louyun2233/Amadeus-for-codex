@@ -20,7 +20,7 @@
         "yRatio": 0.52
       },
       "expressionMap": {
-        "f02": ["sad", "disappointed", "soft"],
+        "f02": ["sad", "disappointed"],
         "f03": ["angry", "furious", "annoyed"],
         "f04": ["surprised", "blush"]
       },
@@ -37,7 +37,7 @@
         "pinch_out": "pinchOut",
         "shake": "shake"
       },
-      "motionSoundsNote": "动作音效文件名与动作同名。模型自带 15 个 mp3，随包解包并按需播放；口型分析器挂在语音元素上，所以音效走独立声道。",
+      "motionSoundsNote": "模型自带的 15 个 MP3 仅作为归档内容保留，原生面板不播放；点击台词统一通过当前配置的克隆语音通道合成。",
       "expressionMapNote": "按表情文件的真实参数映射：f01 无参数（no-op，不能用来区分情绪）；f02 = 眼睛下垂/身体下沉/撇嘴（忧郁）；f03 = 压眉/撇嘴（生气）；f04 = 睁大眼+kirakira+脸红 TERE（惊讶/害羞）。未列出的情绪会显式复位表情，避免上一个表情残留。",
       "sources": [
         "https://nyarchlinux.moe/kurisu.tar.gz"

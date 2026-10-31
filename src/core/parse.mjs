@@ -10,57 +10,67 @@ const LEADING_TAG_RE = new RegExp(`^【(${EMOTIONS.join('|')})】\\s*`)
  */
 /** The voice provider refuses more than 300 characters per request. */
 export const SPEECH_CHUNK_MAX = 280
+export const LOCAL_QWEN_CHUNK_MAX = 80
 
 /**
  * Where to cut an over-long sentence: at punctuation if there is any in the
  * second half of the window, otherwise at the cap. Cutting mid-word makes the
  * synthesiser pause in the middle of a word, which reads as a stutter.
  */
-function cutPoint(text, max) {
-  const window = text.slice(0, max)
-  let best = -1
-  for (const mark of ['。', '！', '？', '!', '?', '、', '，', ',', ' ', '\n']) {
-    const at = window.lastIndexOf(mark)
-    if (at > best) best = at
+function cutPoint(chars, max) {
+  const window = chars.slice(0, max)
+  for (const marks of ['。！？!?\n', '、，,；;', ' \t']) {
+    for (let index = window.length - 1; index >= Math.floor(max / 3); index -= 1) {
+      if (marks.includes(window[index])) return index + 1
+    }
   }
-  return best >= Math.floor(max / 2) ? best + 1 : max
+  return max
 }
 
-export function splitSentences(text, maxSentences = 24, maxLen = 200) {
+/** Original text order and whitespace are preserved; short clips keep their cache key. */
+export function splitLocalSpeech(text) {
+  const chars = Array.from(String(text ?? ''))
   const out = []
-  let buf = ''
+  let offset = 0
+  while (chars.length - offset > LOCAL_QWEN_CHUNK_MAX) {
+    const count = cutPoint(chars.slice(offset, offset + LOCAL_QWEN_CHUNK_MAX), LOCAL_QWEN_CHUNK_MAX)
+    out.push(chars.slice(offset, offset + count).join(''))
+    offset += count
+  }
+  if (offset < chars.length) out.push(chars.slice(offset).join(''))
+  return out
+}
+
+export function splitSentences(text, _maxSentences = 24, maxLen = 200) {
+  // The former sentence-count limit silently truncated a long reply's tail.
+  // Retain the argument for callers, but only cap each request's length.
+  maxLen = Number.isFinite(maxLen) ? Math.max(1, Math.min(SPEECH_CHUNK_MAX, Math.floor(maxLen))) : 200
+  const out = []
+  let buf = []
   const push = () => {
-    const t = buf.trim()
-    buf = ''
-    if (t.length === 0) return
-    let rest = t
-    while (rest.length > maxLen) {
-      const cut = cutPoint(rest, maxLen)
-      const head = rest.slice(0, cut).trim()
-      rest = rest.slice(cut).trim()
-      if (head.length > 0) out.push(head)
+    let rest = buf
+    buf = []
+    if (!rest.join('').trim()) return
+    while (rest.length > maxLen || rest.join('').length > SPEECH_CHUNK_MAX) {
+      let units = 0, budget = 0
+      for (const ch of rest.slice(0, maxLen)) {
+        if (units + ch.length > SPEECH_CHUNK_MAX) break
+        units += ch.length
+        budget += 1
+      }
+      const cut = cutPoint(rest, budget)
+      out.push(rest.slice(0, cut).join(''))
+      rest = rest.slice(cut)
     }
-    if (rest.length > 0) out.push(rest)
+    if (rest.length > 0) out.push(rest.join(''))
   }
   for (const ch of String(text ?? '')) {
-    buf += ch
+    buf.push(ch)
     if (ch === '。' || ch === '！' || ch === '？' || ch === '!' || ch === '?' || ch === '…' || ch === '\n') {
       push()
     }
   }
   push()
-  /**
-   * The old version stopped pushing once `maxSentences` was reached and dropped
-   * the rest of the reply without saying so - one of the ways a sentence "just
-   * disappeared". Anything past the budget is merged into the final chunk
-   * (bounded), so the end of the reply is always spoken.
-   */
-  if (out.length > maxSentences) {
-    const kept = out.slice(0, maxSentences - 1)
-    const tail = out.slice(maxSentences - 1).join('')
-    kept.push(tail.length > SPEECH_CHUNK_MAX ? `${tail.slice(0, SPEECH_CHUNK_MAX - 1)}…` : tail)
-    return kept
-  }
   return out
 }
 
@@ -79,6 +89,27 @@ function firstTag(text) {
   return EMOTIONS.includes(inner) ? inner : null
 }
 
+function emotionalSegments(text, initialEmotion, fallbackEmotion) {
+  const segments = []
+  let currentEmotion = initialEmotion, offset = 0
+  const append = (span) => {
+    for (const sentence of splitSentences(span.trim())) {
+      const bare = sentence.trim()
+      if (bare) segments.push({ text: bare,
+        emotion: normalizeEmotion(currentEmotion || inferEmotion(bare), fallbackEmotion) })
+    }
+  }
+  // Remove complete tags before length cuts: a tag at character 200 must not
+  // become spoken text, and all fragments retain the same selected emotion.
+  for (const match of String(text).matchAll(new RegExp(TAG_RE.source, 'g'))) {
+    append(text.slice(offset, match.index))
+    currentEmotion = match[1]
+    offset = match.index + match[0].length
+  }
+  append(text.slice(offset))
+  return segments
+}
+
 /**
  * Parse the persona reply contract:
  *
@@ -91,7 +122,7 @@ function firstTag(text) {
  */
 export function parseReply(raw) {
   const text = String(raw ?? '').trim()
-  const globalEmotion = firstTag(text) || 'neutral'
+  const explicitEmotion = firstTag(text)
 
   const jpMatch = text.match(/JP[:：]\s*([\s\S]*?)(?=\n\s*CN[:：]|$)/)
   const cnMatch = text.match(/CN[:：]\s*([\s\S]*)$/)
@@ -103,34 +134,26 @@ export function parseReply(raw) {
 
   if (!parsed) {
     const fallback = stripTags(text)
-    const sentences = splitSentences(fallback)
+    const segments = emotionalSegments(text, explicitEmotion, inferEmotion(fallback))
     return {
       parsed: false,
-      emotion: inferEmotion(fallback),
+      emotion: explicitEmotion || inferEmotion(fallback),
       zh: fallback,
       ja: looksLikeJapanese(fallback) ? fallback : '',
-      segments: sentences.map((s) => ({ text: stripTags(s), emotion: inferEmotion(s) })),
+      segments,
     }
   }
 
   if (zh.length === 0) zh = stripTags(ja)
   if (ja.length === 0) ja = zh
+  const globalEmotion = explicitEmotion || inferEmotion(stripTags(`${ja}\n${zh}`))
 
-  const segments = []
-  for (const sentence of splitSentences(ja)) {
-    const lead = firstTag(sentence)
-    const bare = stripTags(sentence)
-    if (bare.length === 0) continue
-    segments.push({
-      text: bare,
-      emotion: normalizeEmotion(lead || globalEmotion, globalEmotion),
-    })
-  }
+  const segments = emotionalSegments(ja, explicitEmotion, globalEmotion)
 
   return {
     parsed: true,
     emotion: normalizeEmotion(globalEmotion, 'neutral'),
-    zh,
+    zh: stripTags(zh),
     ja,
     segments,
   }

@@ -35,7 +35,11 @@ export function parseTaskEvent(line) {
   const turnId = raw?.payload?.turn_id || raw?.payload?.turnId || null
   if (typeof turnId !== 'string' || turnId.length === 0) return null
   const at = Date.parse(raw?.timestamp || '')
-  return { kind, turnId, at: Number.isFinite(at) ? at : Date.now() }
+  const rootTurnId = raw?.payload?.root_turn_id || raw?.payload?.rootTurnId || null
+  return {
+    kind, turnId, at: Number.isFinite(at) ? at : 0,
+    ...(rootTurnId && rootTurnId !== turnId ? { nested: true } : {}),
+  }
 }
 
 function normalize(value) {
@@ -53,22 +57,28 @@ export function isOwnSessionCwd(cwd, dataRoot) {
   return here === root || here.startsWith(`${root}/`)
 }
 
-/** The `session_meta` line carries the working directory of the session. */
-export function readSessionCwd(file, { maxBytes = 16 * 1024 } = {}) {
+/** The first rollout line carries the working directory and parent thread. */
+export function readSessionMeta(file, { maxBytes = 256 * 1024 } = {}) {
   try {
     const fd = fs.openSync(file, 'r')
     try {
       const buffer = Buffer.alloc(maxBytes)
       const read = fs.readSync(fd, buffer, 0, maxBytes, 0)
-      const firstLine = buffer.subarray(0, read).toString('utf8').split('\n')[0]
+      const end = buffer.subarray(0, read).indexOf(10)
+      if (end < 0) return null
+      const firstLine = buffer.subarray(0, end).toString('utf8')
       const meta = JSON.parse(firstLine)
-      return meta?.payload?.cwd || null
+      return meta?.type === 'session_meta' ? meta.payload || null : null
     } finally {
       fs.closeSync(fd)
     }
   } catch {
     return null
   }
+}
+
+export function readSessionCwd(file, options) {
+  return readSessionMeta(file, options)?.cwd || null
 }
 
 /** Newest rollout files, walking the `YYYY/MM/DD` folders from the end. */
@@ -117,7 +127,7 @@ export class TaskWatcher {
     onEvent = () => {},
     pollMs = 2000,
     tailBytes = 128 * 1024,
-    maxFiles = 3,
+    maxFiles = 16,
     listFiles = (root, limit) => newestRollouts(root, limit),
     now = () => Date.now(),
     log = () => {},
@@ -135,6 +145,7 @@ export class TaskWatcher {
     this.ignored = new Set()
     this.seen = new Set()
     this.seenOrder = []
+    this.primedAt = null
     this.timer = null
   }
 
@@ -161,6 +172,7 @@ export class TaskWatcher {
   /** @returns {{kind: string, turnId: string, at: number}[]} events emitted now */
   poll({ prime = false } = {}) {
     const emitted = []
+    if (prime && this.primedAt === null) this.primedAt = this.now()
     // Once a file is being tracked it stays tracked: a long-running thread is
     // appended for days and would otherwise drop out of the "newest" window.
     const candidates = new Map()
@@ -171,33 +183,46 @@ export class TaskWatcher {
     for (const { file } of candidates.values()) {
       if (this.ignored.has(file)) continue
       if (!this.ignored.has(`${file}:checked`)) {
-        const cwd = readSessionCwd(file)
+        const meta = readSessionMeta(file)
+        if (!meta) continue
         this.ignored.add(`${file}:checked`)
-        if (cwd && isOwnSessionCwd(cwd, this.dataRoot)) {
+        if (meta?.parent_thread_id || meta?.agent_path ||
+            isOwnSessionCwd(meta?.cwd, this.dataRoot)) {
           this.ignored.add(file)
           continue
         }
       }
-      let size
+      let stat
       try {
-        size = fs.statSync(file).size
+        stat = fs.statSync(file)
       } catch {
         continue
       }
+      const size = stat.size
       const previous = this.offsets.get(file)
-      // First sight (or a truncated file): start at the end, so history is
-      // never announced when the daemon starts.
-      if (previous === undefined || size < previous) {
+      // Startup history is skipped. A file created after startup already has
+      // task_started by its first poll, so its recent events must be read.
+      if ((previous === undefined && (prime || this.primedAt === null)) ||
+          (previous !== undefined && size < previous)) {
         this.offsets.set(file, size)
         continue
       }
       if (prime || size === previous) continue
       // Stay bounded on a huge file: skip ahead, then ignore the partial line.
-      const start = size - previous > this.tailBytes ? size - this.tailBytes : previous
+      const firstSight = previous === undefined
+      const offset = firstSight ? 0 : previous
+      const start = size - offset > this.tailBytes ? size - this.tailBytes : offset
       let chunk
+      let firstChunk = ''
       try {
         const fd = fs.openSync(file, 'r')
         try {
+          if (firstSight && start > 0) {
+            const firstLength = Math.min(size, Math.max(this.tailBytes, 256 * 1024))
+            const firstBuffer = Buffer.alloc(firstLength)
+            fs.readSync(fd, firstBuffer, 0, firstLength, 0)
+            firstChunk = firstBuffer.toString('utf8')
+          }
           const length = size - start
           const buffer = Buffer.alloc(length)
           fs.readSync(fd, buffer, 0, length, start)
@@ -208,21 +233,28 @@ export class TaskWatcher {
       } catch {
         continue
       }
-      const lastBreak = chunk.lastIndexOf('\n')
-      if (lastBreak < 0) continue
-      const complete = chunk.slice(0, lastBreak + 1)
-      this.offsets.set(file, start + Buffer.byteLength(complete, 'utf8'))
-      for (const line of complete.split('\n')) {
-        const event = parseTaskEvent(line)
-        if (!event) continue
-        const key = `${event.turnId}:${event.kind}`
-        if (this.seen.has(key)) continue
-        this.seen.add(key)
-        this.seenOrder.push(key)
-        while (this.seenOrder.length > 500) this.seen.delete(this.seenOrder.shift())
-        emitted.push(event)
-        this.onEvent(event)
+      const deliver = (contents) => {
+        const lastBreak = contents.lastIndexOf('\n')
+        if (lastBreak < 0) return -1
+        for (const line of contents.slice(0, lastBreak + 1).split('\n')) {
+          const event = parseTaskEvent(line)
+          if (!event) continue
+          if (firstSight && event.at < this.primedAt - Math.max(5000, this.pollMs * 2) &&
+              !(event.at === 0 && stat.birthtimeMs >= this.primedAt)) continue
+          if (event.nested) continue
+          const key = `${event.turnId}:${event.kind}`
+          if (this.seen.has(key)) continue
+          this.seen.add(key)
+          this.seenOrder.push(key)
+          while (this.seenOrder.length > 500) this.seen.delete(this.seenOrder.shift())
+          emitted.push(event)
+          this.onEvent(event)
+        }
+        return Buffer.byteLength(contents.slice(0, lastBreak + 1), 'utf8')
       }
+      if (firstChunk) deliver(firstChunk)
+      const completeBytes = deliver(chunk)
+      if (completeBytes >= 0) this.offsets.set(file, start + completeBytes)
     }
     return emitted
   }

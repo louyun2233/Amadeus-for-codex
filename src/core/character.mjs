@@ -51,6 +51,15 @@ export function loadCharacterContent(name = 'kurisu') {
   }
   line(content.welcome, ['text', 'emotion'], 'welcome')
   lines(content.tapReactions, ['text', 'emotion'], 'tapReactions')
+  for (const item of content.tapReactions) {
+    if (item.cn !== undefined && (typeof item.cn !== 'string' || !item.cn.trim() || item.cn.length > 120)) {
+      throw new Error('tapReactions.cn must be 1-120 characters when provided')
+    }
+    if (item.gestures !== undefined && (!Array.isArray(item.gestures) || item.gestures.length === 0 ||
+        item.gestures.some((gesture) => !['head', 'body', 'swipe', 'pat'].includes(gesture)))) {
+      throw new Error('tapReactions.gestures must use head, body, swipe or pat')
+    }
+  }
   for (const kind of ['start', 'complete', 'failed']) {
     lines(content.taskLines?.[kind], ['text', 'cn', 'emotion'], `taskLines.${kind}`)
   }

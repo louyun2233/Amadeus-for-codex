@@ -342,6 +342,8 @@ export class MemoryStore {
         total: entries.length,
         active: entries.length - superseded,
         superseded,
+        durable: entries.filter((e) => !e.supersededBy && e.source !== 'conversation' && e.type !== 'recap').length,
+        recaps: entries.filter((e) => !e.supersededBy && (e.source === 'conversation' || e.type === 'recap')).length,
         byType: entries.reduce((acc, e) => {
           acc[e.type] = (acc[e.type] || 0) + 1
           return acc

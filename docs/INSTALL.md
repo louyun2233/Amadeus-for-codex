@@ -13,7 +13,7 @@
 
 ## 安装（发行包）
 
-1. 下载仓库中的 [0.1.4 安装包](../releases/amadeus-codex-0.1.4.zip)，或在 GitHub 选择 **Code → Download ZIP** 下载源码。把压缩包**完整解压**到固定目录（路径含空格也可以）；不要在压缩包预览窗口内运行脚本。
+1. 下载 [最新源码 ZIP](https://github.com/louyun2233/Amadeus-for-codex/archive/refs/heads/main.zip)，或在 GitHub 的 `main` 分支选择 **Code → Download ZIP**。源码包含一键安装入口；历史 0.1.4 安装包不包含本轮后续修复。把压缩包**完整解压**到固定目录（路径含空格也可以）；不要在压缩包预览窗口内运行脚本。
 2. 双击解压目录里的 **`安装 Amadeus.cmd`**。安装窗口会报告依赖安装、EXE 构建、Codex 注册、服务启动和角色素材的结果。安装完成后按任意键关闭安装窗口。
 3. 重启 Codex Desktop，让新 MCP 连接生效。此后可随 Codex 打开面板，或双击同一目录中的 `Amadeus.exe` 单独打开。
 

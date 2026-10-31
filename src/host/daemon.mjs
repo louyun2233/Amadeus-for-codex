@@ -436,6 +436,7 @@ export function createDaemon(deps) {
     'POST /amadeus/client/active': guard(async (req, res, url) => {
       const clientId = clientIdOf(req, url)
       if (!clientId) return sendJson(res, 400, { ok: false, error: 'missing client id' })
+      proactive?.noteInteraction()
       sendJson(res, 200, { ok: true, ...hub.claimAudio(clientId) })
     }),
 

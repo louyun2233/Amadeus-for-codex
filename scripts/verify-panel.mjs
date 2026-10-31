@@ -1,145 +1,122 @@
 #!/usr/bin/env node
 /**
- * Panel readiness check.
- *
- * A Live2D panel can look "broken" for very boring reasons: one texture 404s,
- * the physics file is missing, the runtime script never loaded. This walks
- * every URL the renderer depends on and fails loudly on the first gap.
+ * Read-only readiness check for the Windows Qt/OpenGL panel.
+ * Uses the installed native runtime and loopback daemon; it never launches a
+ * window, installs dependencies, synthesizes speech, or reads chat messages.
  *
  * Usage: node scripts/verify-panel.mjs [--data <dir>]
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { resolvePaths } from '../src/shared/paths.mjs'
 
+const ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..')
 const args = process.argv.slice(2)
 const dataFlag = args.indexOf('--data')
+if (dataFlag >= 0 && !args[dataFlag + 1]) {
+  console.error('Usage: node scripts/verify-panel.mjs [--data <dir>]')
+  process.exit(1)
+}
 const paths = resolvePaths(
   dataFlag >= 0 ? { ...process.env, AMADEUS_DATA_DIR: args[dataFlag + 1] } : process.env,
 )
-
-const info = JSON.parse(fs.readFileSync(paths.daemonFile, 'utf8'))
-const base = `http://127.0.0.1:${info.port}`
-const auth = { Authorization: `Bearer ${info.token}` }
-
-let failures = 0
 const rows = []
-
-function record(label, ok, detail) {
-  rows.push({ label, ok, detail })
-  if (!ok) failures += 1
+const record = (label, ok, detail = '') => rows.push({ label, ok: Boolean(ok), detail })
+const exists = (file) => {
+  try { return fs.statSync(file).isFile() && fs.statSync(file).size > 0 } catch { return false }
 }
 
-async function head(url, { json = false } = {}) {
-  const res = await fetch(base + url, { headers: auth })
-  const buf = Buffer.from(await res.arrayBuffer())
-  let parsed = null
-  if (json && res.ok) {
-    try {
-      parsed = JSON.parse(buf.toString('utf8'))
-    } catch (e) {
-      return { ok: false, status: res.status, bytes: buf.length, error: 'invalid json' }
+// Check the same native resources that the installer requires. A missing
+// launcher or virtual environment is an installation problem, not a web 404.
+const manifest = JSON.parse(fs.readFileSync(path.join(ROOT, 'config', 'dist-manifest.json'), 'utf8'))
+for (const rel of manifest.requiredForInstall.filter((name) => name.startsWith('native/') || name === 'scripts/Amadeus.ico')) {
+  record(rel, exists(path.join(ROOT, rel)))
+}
+record('Amadeus.exe', exists(path.join(ROOT, 'Amadeus.exe')))
+let stamp = ''
+try { stamp = fs.readFileSync(path.join(ROOT, 'Amadeus.native'), 'utf8').trim() } catch { /* not installed */ }
+record('native launcher marker', stamp === 'qt-opengl')
+
+const python = path.join(ROOT, '.native-venv', 'Scripts', 'python.exe')
+record('Windows native Python', process.platform === 'win32' && exists(python),
+  process.platform !== 'win32' ? 'Windows is required' : '')
+if (process.platform === 'win32' && exists(python)) {
+  const result = spawnSync(python, ['-c', [
+    'import sys',
+    'assert sys.version_info >= (3, 11) and sys.maxsize > 2**32',
+    'import live2d',
+    'from PySide6.QtOpenGLWidgets import QOpenGLWidget',
+    'from OpenGL.GL import glViewport',
+    'import clr',
+    'print("native-dependencies-ready")',
+  ].join('\n')], { cwd: ROOT, encoding: 'utf8', timeout: 15000, windowsHide: true })
+  record('Qt / OpenGL / Live2D / Windows speech dependencies',
+    result.status === 0 && result.stdout.includes('native-dependencies-ready'),
+    result.status === 0 ? '' : 'Run the desktop installer to repair the native environment')
+}
+
+let info = null
+try {
+  const parsed = JSON.parse(fs.readFileSync(paths.daemonFile, 'utf8'))
+  if (Number.isInteger(parsed.port) && parsed.port > 0 && parsed.port <= 65535 && typeof parsed.token === 'string' && parsed.token) info = parsed
+} catch { /* the diagnostic reports this without starting a daemon */ }
+record('daemon connection metadata', info !== null, info ? '' : 'Start Amadeus before running this check')
+
+async function get(apiPath) {
+  try {
+    const response = await fetch(`http://127.0.0.1:${info.port}${apiPath}`, {
+      headers: { Authorization: `Bearer ${info.token}` },
+      signal: AbortSignal.timeout(5000),
+    })
+    if (!response.ok) return { ok: false, detail: `HTTP ${response.status}` }
+    return { ok: true, body: await response.json() }
+  } catch {
+    return { ok: false, detail: 'Loopback daemon unavailable or response invalid' }
+  }
+}
+
+if (info) {
+  const results = await Promise.allSettled([
+    get('/amadeus/health'), get('/amadeus/status'), get('/amadeus/assets/status'),
+  ])
+  const [health, status, assets] = results.map((result) => result.status === 'fulfilled'
+    ? result.value : { ok: false, detail: 'Request failed' })
+  record('daemon health', health.ok && health.body?.ok === true, health.detail)
+  record('native panel status', status.ok, status.ok
+    ? `${status.body?.events?.nativeClients || 0} connected native window(s); a closed window is allowed`
+    : status.detail)
+  record('assets status', assets.ok, assets.detail)
+  if (assets.ok) {
+    const model = assets.body?.activeModel
+    const entry = typeof model?.entry === 'string' ? model.entry : ''
+    record('active native model installed', model?.installed && exists(entry))
+    if (entry && exists(entry)) {
+      let settings = null
+      try { settings = JSON.parse(fs.readFileSync(entry, 'utf8')) } catch { /* reported below */ }
+      record('model JSON readable', settings !== null)
+      if (settings) {
+        const refs = new Set()
+        if (settings.model) refs.add(settings.model)
+        for (const texture of settings.textures || []) refs.add(texture)
+        if (settings.physics) refs.add(settings.physics)
+        if (settings.pose) refs.add(settings.pose)
+        for (const expression of settings.expressions || []) if (expression.file) refs.add(expression.file)
+        for (const group of Object.values(settings.motions || {})) {
+          for (const motion of group || []) if (motion.file) refs.add(motion.file)
+        }
+        // Original motion audio is deliberately not played by the native
+        // panel: all spoken reactions use the user's selected voice.
+        const missing = [...refs].filter((rel) => typeof rel !== 'string' || !exists(path.resolve(path.dirname(entry), rel)))
+        record('native model files', refs.size > 0 && missing.length === 0,
+          `${refs.size} references, ${missing.length} missing`)
+      }
     }
   }
-  return {
-    ok: res.ok && buf.length > 0,
-    status: res.status,
-    bytes: buf.length,
-    type: res.headers.get('content-type') || '',
-    parsed,
-  }
 }
 
-// 1. panel shell + modules
-for (const file of [
-  'index.html',
-  'panel.css',
-  'main.js',
-  'welcome.js',
-  'asset-urls.js',
-  'transport.js',
-  'audio-queue.js',
-  'live2d.js',
-  'placeholder.js',
-  'views.js',
-]) {
-  const r = await head(`/amadeus/panel/${file}`)
-  record(`panel/${file}`, r.ok, `${r.status} ${r.bytes}B`)
-}
-
-// 2. vendored, MIT-licensed runtime pieces
-for (const file of [
-  'pixi-7.4.2.min.js',
-  'pixi-live2d-display-0.4.0-cubism2.min.js',
-]) {
-  const r = await head(`/amadeus/panel/vendor/${file}`)
-  record(`vendor/${file}`, r.ok, `${r.status} ${r.bytes}B`)
-}
-
-// 3. asset status must report ready
-const status = await head('/amadeus/assets/status', { json: true })
-record('assets/status reachable', status.ok, `${status.status}`)
-if (status.parsed) {
-  record('assets ready', status.parsed.ready === true, `degrade=${status.parsed.degrade ?? 'none'}`)
-  for (const pack of status.parsed.packs || []) {
-    const ok = pack.kind === 'runtime' ? pack.installed && pack.matches : pack.installed
-    record(`pack ${pack.id}`, ok, pack.kind === 'runtime' ? `hash ${pack.actualSha256?.slice(0, 12)}…` : `v${pack.version}`)
-  }
-}
-
-// 4. the Cubism 2 core, served from the user-controlled cache
-const runtimeName = status.parsed?.activeRuntime?.targetName || 'live2d.min.js'
-const runtime = await head('/amadeus/assets/runtime/' + encodeURIComponent(runtimeName))
-record(`runtime ${runtimeName}`, runtime.ok, `${runtime.status} ${runtime.bytes}B`)
-
-// 5. everything the model setting file references
-const modelName = status.parsed?.activeModel?.entryName
-const modelRes = modelName
-  ? await head('/amadeus/assets/current/' + modelName.split('/').map(encodeURIComponent).join('/'), { json: true })
-  : { ok: false, status: 0, bytes: 0, parsed: null }
-record(`model ${modelName || '(not configured)'}`, modelRes.ok, `${modelRes.status} ${modelRes.bytes}B`)
-
-if (modelRes.parsed) {
-  const model = modelRes.parsed
-  const referenced = new Set()
-  if (model.model) referenced.add(model.model)
-  for (const t of model.textures || []) referenced.add(t)
-  if (model.physics) referenced.add(model.physics)
-  if (model.pose) referenced.add(model.pose)
-  for (const e of model.expressions || []) if (e.file) referenced.add(e.file)
-  for (const group of Object.values(model.motions || {})) {
-    for (const m of group || []) if (m.file) referenced.add(m.file)
-  }
-
-  for (const rel of [...referenced].sort()) {
-    const r = await head(`/amadeus/assets/current/${rel}`)
-    record(`model file ${rel}`, r.ok, `${r.status} ${r.bytes}B`)
-  }
-
-  // motion sound files are extracted but intentionally not played in M4
-  const soundRefs = new Set()
-  for (const group of Object.values(model.motions || {})) {
-    for (const m of group || []) if (m.sound) soundRefs.add(m.sound)
-  }
-  if (soundRefs.size > 0) {
-    const r = await head(`/amadeus/assets/current/${[...soundRefs][0]}`)
-    record(`motion sound (reserved, not played)`, r.ok, `${r.status} ${r.bytes}B`)
-  }
-}
-
-// 6. cross-check that the runtime actually registers the Live2D model class
-const pld = await fetch(base + '/amadeus/panel/vendor/pixi-live2d-display-0.4.0-cubism2.min.js', { headers: auth })
-const pldText = await pld.text()
-record('pld registers PIXI.live2d.Live2DModel', /live2d/.test(pldText) && /Live2DModel/.test(pldText), `${pldText.length}B`)
-
-const core = await fetch(base + '/amadeus/assets/runtime/live2d.min.js', { headers: auth })
-const coreText = await core.text()
-record('cubism2 core looks like Live2D', (coreText.match(/Live2D/g) || []).length >= 3, `${coreText.length}B`)
-
-// report
-const width = Math.max(...rows.map((r) => r.label.length))
-for (const r of rows) {
-  console.log(`${r.ok ? 'PASS' : 'FAIL'}  ${r.label.padEnd(width)}  ${r.detail}`)
-}
+for (const row of rows) console.log(`${row.ok ? 'PASS' : 'FAIL'}  ${row.label}${row.detail ? '  ' + row.detail : ''}`)
+const failures = rows.filter((row) => !row.ok).length
 console.log(`\n${rows.length - failures}/${rows.length} checks passed`)
-process.exit(failures === 0 ? 0 : 1)
+process.exitCode = failures === 0 ? 0 : 1

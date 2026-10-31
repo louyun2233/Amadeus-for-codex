@@ -35,7 +35,7 @@ function openPanelOnConnect() {
   } catch {
     /* the in-memory latch still avoids repeats in this process */
   }
-  // Do not delay MCP initialization while the daemon and browser start.
+  // Do not delay MCP initialization while the daemon and native panel start.
   setImmediate(async () => {
     try {
       const result = await openPanel({ paths, welcome: true })
@@ -139,7 +139,7 @@ const TOOLS = [
   },
   {
     name: 'amadeus_open_panel',
-    description: '返回面板地址；若用户在设置中允许，则同时打开浏览器。',
+    description: '打开 Amadeus 原生 Windows 面板，或报告面板已打开；不返回会话令牌。',
     inputSchema: { type: 'object', properties: {}, additionalProperties: false },
   },
   {
@@ -200,15 +200,18 @@ async function preauthorized(flag) {
 async function callTool(name, args) {
   const a = args || {}
   switch (name) {
-    case 'amadeus_status':
-    case 'amadeus_capabilities': {
+    case 'amadeus_status': {
       const body = await statusSnapshot()
-      return { ok: true, status: body }
+      return { ok: body?.ok !== false, status: body }
+    }
+    case 'amadeus_capabilities': {
+      const { body } = await callDaemon(paths, 'GET', '/amadeus/diag')
+      return body
     }
     case 'amadeus_recall': {
       const q = encodeURIComponent(String(a.query ?? ''))
       const limit = Number(a.limit || 8)
-      const ns = a.namespace ? `&namespace=${encodeURIComponent(a.namespace)}` : ''
+      const ns = `&namespace=${encodeURIComponent(a.namespace || 'panel')}`
       const { body } = await callDaemon(paths, 'GET', `/amadeus/memory?q=${q}&limit=${limit}${ns}`)
       return body
     }
@@ -257,11 +260,11 @@ async function callTool(name, args) {
       return body
     }
     case 'amadeus_open_panel': {
-      const info = await ensureDaemon(paths)
+      const result = await openPanel({ paths, welcome: true })
       return {
-        ok: true,
-        url: `http://127.0.0.1:${info.port}/amadeus/panel/index.html?token=${info.token}`,
-        note: '把这个地址在浏览器打开即可；token 只用于换取会话 cookie。',
+        ok: result.ok,
+        status: result.status,
+        note: result.ok ? 'Amadeus 原生面板已打开或正在启动。' : '原生面板无法启动，请检查安装与自检结果。',
       }
     }
     case 'amadeus_sessions': {

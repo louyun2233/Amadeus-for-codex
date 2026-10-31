@@ -4,7 +4,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { ensureDaemon } from './daemon-client.mjs'
 
-const LAUNCH_COOLDOWN_MS = 5000
+const LAUNCH_COOLDOWN_MS = 30000
 
 function launchLockFile(paths) {
   return paths?.dataRoot ? path.join(paths.dataRoot, 'runtime', 'panel-launch.lock') : null
@@ -22,12 +22,24 @@ export function launchInFlight(paths, { now = Date.now() } = {}) {
 
 function noteLaunch(paths) {
   const file = launchLockFile(paths)
-  if (!file) return
+  if (!file) return true
   try {
     fs.mkdirSync(path.dirname(file), { recursive: true })
-    fs.writeFileSync(file, String(Date.now()), { encoding: 'utf8', mode: 0o600 })
+    const acquire = () => {
+      const fd = fs.openSync(file, 'wx', 0o600)
+      fs.closeSync(fd)
+      return true
+    }
+    try {
+      return acquire()
+    } catch (error) {
+      if (error?.code !== 'EEXIST' || launchInFlight(paths)) return false
+      fs.unlinkSync(file)
+      return acquire()
+    }
   } catch {
     // An unwritable lock file must not prevent the panel from opening.
+    return true
   }
 }
 
@@ -99,7 +111,8 @@ export async function openPanel({ paths, force = false, browser = false, ensure 
   }
   const native = nativeWindowExecutable()
   if (!native) return { ok: false, status: 'native-unavailable', info }
-  noteLaunch(paths)
+  if (!force && !noteLaunch(paths)) return { ok: true, status: 'launching', info }
+  if (force) noteLaunch(paths)
   openNativeWindow(native, info, { welcome })
   return { ok: true, status: 'window', info }
 }

@@ -273,8 +273,37 @@ test('a throwing delivery is contained and reported', async () => {
   await h.scheduler.tick()
   h.advance(20 * HOUR)
   const decision = await h.scheduler.tick()
-  assert.equal(decision.action, 'call')
+  assert.equal(decision.action, 'none')
+  assert.equal(h.state.callCount, 0)
   assert.ok(h.reports.some((r) => r.msg.includes('delivery failed')))
+})
+
+test('a generated proactive line is cancelled if the user or playback context changes', async () => {
+  for (const reason of ['interaction', 'busy', 'muted', 'disabled', 'offline']) {
+    let release
+    let busy = false
+    let audience = true
+    const gate = new Promise((resolve) => { release = resolve })
+    const h = harness({ deps: {
+      complete: async () => { await gate; return '【soft】\nJP: ねぇ\nCN: 喂' },
+      isBusy: () => busy,
+      hasAudience: () => audience,
+    } })
+    await h.scheduler.tick()
+    h.advance(20 * HOUR)
+    const pending = h.scheduler.tick()
+    if (reason === 'interaction') h.scheduler.noteInteraction({ text: '新的聊天' })
+    if (reason === 'busy') busy = true
+    if (reason === 'muted') h.config.value.voice.enabled = false
+    if (reason === 'disabled') h.config.value.proactive.callEnabled = false
+    if (reason === 'offline') audience = false
+    release()
+    const decision = await pending
+    assert.equal(decision.action, 'none', reason)
+    assert.equal(h.delivered.length, 0, reason)
+    assert.equal(h.state.callCount, 0, reason)
+    assert.equal(h.scheduler.inFlight, false, reason)
+  }
 })
 
 test('noteInteraction restarts the idle clock', async () => {

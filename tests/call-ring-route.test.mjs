@@ -20,7 +20,7 @@ import { tempPaths, cleanup } from './helpers.mjs'
  *    which used to make her speak the reply and the announcement at once
  */
 
-function build() {
+function build({ proactive = null } = {}) {
   const paths = tempPaths()
   const config = new ConfigStore(paths)
   config.update({ voice: { enabled: true }, broadcast: { enabled: true, onTaskComplete: true, onTaskFailed: true } })
@@ -38,15 +38,15 @@ function build() {
     hub,
     diag: async () => ({ ok: true }),
     assets: null,
-    proactive: null,
+    proactive,
     systemTts: null,
     version: 'test',
   })
   return { paths, daemon, hub, audit, config }
 }
 
-async function withDaemon(fn) {
-  const ctx = build()
+async function withDaemon(fn, options) {
+  const ctx = build(options)
   const info = await ctx.daemon.start()
   const auth = { Authorization: `Bearer ${info.token}` }
   try {
@@ -149,4 +149,37 @@ test('task notifications stay silent when voice is disabled', async () => {
     assert.equal((await res.json()).broadcasted, false)
     assert.equal(hub.status().pendingUtterances, 0)
   })
+})
+
+test('cached native interaction resets idle only after authentication and never queues speech', async () => {
+  let interactions = 0
+  await withDaemon(async ({ info, auth, hub }) => {
+    const client = 'native-cached-reaction'
+    const removeClient = hub.addClient({ write() {}, end() {} }, client)
+    const url = `http://127.0.0.1:${info.port}/amadeus/client/active`
+    try {
+      for (const headers of [
+        { 'X-Amadeus-Client': client },
+        { 'X-Amadeus-Client': client, Authorization: 'Bearer invalid-test-token' },
+      ]) {
+        const response = await fetch(url, { method: 'POST', headers })
+        assert.equal(response.status, 401)
+        await response.arrayBuffer()
+        assert.equal(interactions, 0, 'unauthenticated requests cannot postpone idle reminders')
+        assert.equal(hub.status().pendingUtterances, 0)
+      }
+
+      const response = await fetch(url, {
+        method: 'POST', headers: { ...auth, 'X-Amadeus-Client': client },
+      })
+      assert.equal(response.status, 200)
+      const result = await response.json()
+      assert.equal(result.ok, true)
+      assert.equal(result.owner, client)
+      assert.equal(interactions, 1, 'native cached playback still counts as user interaction')
+      assert.equal(hub.status().pendingUtterances, 0, 'an activity touch must not replay or synthesize a reaction')
+    } finally {
+      removeClient()
+    }
+  }, { proactive: { noteInteraction() { interactions += 1 } } })
 })

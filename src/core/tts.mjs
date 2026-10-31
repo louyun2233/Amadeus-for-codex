@@ -4,6 +4,7 @@ import crypto from 'node:crypto'
 import { synthesize as edgeSynthesize, EDGE_VOICES } from './edge-tts.mjs'
 import { normalizeEmotion } from './emotion.mjs'
 import { sanitizeForSpeech } from './speech-text.mjs'
+import { splitLocalSpeech, LOCAL_QWEN_CHUNK_MAX } from './parse.mjs'
 import { AmadeusError, ErrorCode } from '../shared/errors.mjs'
 import { createChildLogger } from '../shared/log.mjs'
 import { ensureLocalQwen } from './local-qwen-service.mjs'
@@ -19,6 +20,127 @@ const LOCAL_QWEN_URL = 'http://127.0.0.1:7860/v1/audio/speech'
 const LOCAL_QWEN_WAIT_MS = 360000
 const LOCAL_QWEN_RETRY_MS = 5000
 const DEFAULT_EDGE_VOICE = 'ja-JP-NanamiNeural'
+
+function validLocalWav(audio) {
+  if (!Buffer.isBuffer(audio) || audio.length < 44 || audio.toString('ascii', 0, 4) !== 'RIFF' ||
+      audio.toString('ascii', 8, 12) !== 'WAVE') return false
+  const declared = audio.readUInt32LE(4)
+  const streaming = declared === 0xffffffff
+  if (!streaming && declared + 8 !== audio.length) return false
+  let offset = 12, alignment = 0, hasData = false
+  while (offset + 8 <= audio.length) {
+    const tag = audio.toString('ascii', offset, offset + 4)
+    let size = audio.readUInt32LE(offset + 4)
+    offset += 8
+    if (tag === 'data' && streaming && size === 0xffffffff) size = audio.length - offset
+    if (offset + size > audio.length) return false
+    if (tag === 'fmt ') {
+      if (alignment || size < 16) return false
+      const channels = audio.readUInt16LE(offset + 2)
+      const rate = audio.readUInt32LE(offset + 4)
+      alignment = audio.readUInt16LE(offset + 12)
+      if (audio.readUInt16LE(offset) !== 1 || channels < 1 || channels > 2 || rate < 8000 || rate > 192000 ||
+          audio.readUInt16LE(offset + 14) !== 16 || alignment !== channels * 2 ||
+          audio.readUInt32LE(offset + 8) !== rate * alignment) return false
+    } else if (tag === 'data') {
+      if (!alignment || hasData || size === 0 || size % alignment) return false
+      hasData = true
+    }
+    offset += size + (size & 1)
+  }
+  return hasData && offset === audio.length
+}
+
+async function completedLocalWav(response) {
+  // The local service streams WAV with unknown RIFF lengths and may end an
+  // HTTP 200 early after a generation failure. SSE provides the completion or
+  // error event that raw audio lacks. Keep its original PCM bytes unchanged.
+  if (!response.headers?.get('content-type')?.includes('text/event-stream') || !response.body) {
+    throw new AmadeusError(ErrorCode.UNAVAILABLE, '本地 Qwen TTS 未返回可验证完成状态的语音流')
+  }
+  const chunks = [], decoder = new TextDecoder()
+  let pending = '', data = [], complete = false, receivedBytes = 0, audioBytes = 0
+  const fail = (message) => { throw new AmadeusError(ErrorCode.UNAVAILABLE, message) }
+  const event = () => {
+    if (!data.length) return
+    let payload
+    try { payload = JSON.parse(data.join('\n')) } catch { fail('本地 Qwen TTS 语音流格式损坏') }
+    data = []
+    if (payload?.type === 'error') fail('本地 Qwen TTS 合成中途中断，未播放或缓存不完整语音')
+    if (payload?.type === 'speech.audio.delta') {
+      const encoded = payload.audio
+      if (complete || typeof encoded !== 'string' || !encoded.length || encoded.length % 4 ||
+          !/^[A-Za-z0-9+/]+={0,2}$/.test(encoded)) fail('本地 Qwen TTS 音频片段损坏')
+      const chunk = Buffer.from(encoded, 'base64')
+      if (chunk.toString('base64') !== encoded) fail('本地 Qwen TTS 音频片段损坏')
+      audioBytes += chunk.length
+      if (audioBytes > 48 * 1024 * 1024) fail('本地 Qwen TTS 音频超过安全长度')
+      chunks.push(chunk)
+    } else if (payload?.type === 'speech.audio.done') {
+      if (complete || !chunks.length) fail('本地 Qwen TTS 完成事件无有效音频')
+      complete = true
+    }
+  }
+  const lines = () => {
+    let newline
+    while ((newline = pending.indexOf('\n')) >= 0) {
+      const line = pending.slice(0, newline).replace(/\r$/, '')
+      pending = pending.slice(newline + 1)
+      if (line === '') event()
+      else if (line.startsWith('data:')) data.push(line.slice(5).replace(/^ /, ''))
+    }
+  }
+  try {
+    for await (const chunk of response.body) {
+      receivedBytes += chunk.length
+      if (receivedBytes > 64 * 1024 * 1024) fail('本地 Qwen TTS 语音流超过安全长度')
+      pending += decoder.decode(chunk, { stream: true })
+      lines()
+    }
+    pending += decoder.decode()
+    lines()
+  } catch (error) {
+    if (error instanceof AmadeusError) throw error
+    fail('本地 Qwen TTS 语音流传输中断，未缓存不完整语音')
+  }
+  if (!complete || pending.trim() || data.length) fail('本地 Qwen TTS 语音未完整生成，未缓存不完整语音')
+  const audio = Buffer.concat(chunks, audioBytes)
+  if (!validLocalWav(audio)) fail('本地 Qwen TTS 返回的 WAV 数据损坏，未缓存')
+  return audio
+}
+
+function joinLocalWavs(parts) {
+  // Rebuild only the WAV container. No resampling, crossfade, pitch changes,
+  // silence removal or added samples: each segment keeps its original PCM.
+  let format = null, size = 0
+  const pcm = []
+  for (const audio of parts) {
+    if (!validLocalWav(audio)) throw new AmadeusError(ErrorCode.UNAVAILABLE, '本地 Qwen TTS 分段音频损坏')
+    let offset = 12
+    while (offset + 8 <= audio.length) {
+      const tag = audio.toString('ascii', offset, offset + 4)
+      let length = audio.readUInt32LE(offset + 4)
+      offset += 8
+      if (tag === 'data' && length === 0xffffffff) length = audio.length - offset
+      if (tag === 'fmt ') {
+        const current = audio.subarray(offset, offset + 16)
+        if (format && !format.equals(current)) throw new AmadeusError(ErrorCode.UNAVAILABLE, '本地 Qwen TTS 分段音频格式不一致')
+        format = current
+      } else if (tag === 'data') {
+        pcm.push(audio.subarray(offset, offset + length))
+        size += length
+        if (size > 48 * 1024 * 1024) throw new AmadeusError(ErrorCode.UNAVAILABLE, '本地 Qwen TTS 音频过长')
+      }
+      offset += length + (length & 1)
+    }
+  }
+  const header = Buffer.alloc(44)
+  header.write('RIFF', 0); header.writeUInt32LE(size + 36, 4)
+  header.write('WAVEfmt ', 8); header.writeUInt32LE(16, 16)
+  format.copy(header, 20)
+  header.write('data', 36); header.writeUInt32LE(size, 40)
+  return Buffer.concat([header, ...pcm], 44 + size)
+}
 
 function cacheKey(req) {
   return crypto
@@ -110,6 +232,7 @@ export class TtsService {
       const meta = JSON.parse(fs.readFileSync(this.#metaFile(id), 'utf8'))
       const audio = fs.readFileSync(this.#audioFile(id, meta.ext || 'mp3'))
       if (audio.length < 200) throw new Error('cache entry too small')
+      if (meta.provider === 'qwen-local' && !validLocalWav(audio)) throw new Error('invalid local WAV cache')
       fs.utimesSync(this.#audioFile(id, meta.ext || 'mp3'), new Date(), new Date())
       return { ...meta, audio }
     } catch {
@@ -353,15 +476,36 @@ export class TtsService {
   }
 
   async #synthesizeLocalQwen(req) {
-    const model = this.config.getPath('voice.localModel') || 'Qwen/Qwen3-TTS-12Hz-0.6B-Base'
+    const model = req.localModel || this.config.getPath('voice.localModel') || 'Qwen/Qwen3-TTS-12Hz-0.6B-Base'
+    const chunks = splitLocalSpeech(req.text)
+    const segmented = chunks.length > 1
     // The format is part of the key so old lossy MP3 entries are not served
     // after switching the local clone to lossless WAV output.
-    const id = cacheKey({ ...req, voice: `${model}:${req.voice}:wav-v1` })
+    // Local Base cloning does not use emotion, speed or pitch. Canonicalize
+    // those cache dimensions too: facial changes must not resample the same
+    // line and make the selected clone sound different on each expression.
+    const version = segmented ? `wav-chunks-${LOCAL_QWEN_CHUNK_MAX}-v1` : 'wav-v1'
+    const id = cacheKey({ ...req, emotion: 'neutral', rate: '+0%', pitch: '+0Hz',
+      voice: `${model}:${req.voice}:${version}` })
     const cached = this.#readCache(id)
     if (cached) return { id, cached: true, ...cached }
     if (this.inflight.has(id)) return this.inflight.get(id)
 
     const task = (async () => {
+      if (segmented) {
+        const parts = []
+        // Chat normally queues these pieces individually for early playback.
+        // Other callers still get safe synthesis, without reusing old long
+        // single-pass clips or changing any existing short reaction cache.
+        for (const text of chunks) {
+          const part = await this.#synthesizeLocalQwen({ ...req, text, localModel: model })
+          parts.push(part.audio)
+        }
+        const audio = joinLocalWavs(parts)
+        const result = { audio, words: [], mime: 'audio/wav', provider: 'qwen-local' }
+        this.#writeCache(id, result)
+        return { id, cached: false, ...result }
+      }
       if (!(await this.#waitForLocalQwen())) {
         throw new AmadeusError(ErrorCode.UNAVAILABLE,
           '本地 Qwen TTS 未就绪：等待冷启动后仍无法连接 127.0.0.1:7860，请检查语音实例')
@@ -377,6 +521,7 @@ export class TtsService {
             input: req.text,
             language: 'japanese',
             response_format: 'wav',
+            stream_format: 'sse',
             max_new_tokens: Math.min(1200, Math.max(96, req.text.length * 8)),
           }),
           signal: AbortSignal.timeout(180000),
@@ -388,7 +533,7 @@ export class TtsService {
         const detail = (await res.text()).slice(0, 300)
         throw new AmadeusError(ErrorCode.UNAVAILABLE, `本地 Qwen TTS HTTP ${res.status} ${detail}`)
       }
-      const audio = Buffer.from(await res.arrayBuffer())
+      const audio = await completedLocalWav(res)
       if (audio.length < 1000) {
         throw new AmadeusError(ErrorCode.UNAVAILABLE, '本地 Qwen TTS 返回的音频过短')
       }

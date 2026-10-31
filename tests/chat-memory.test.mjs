@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { ChatEngine, candidateSupportedByUser, mayContainLongTermFact } from '../src/core/chat.mjs'
+import { ChatEngine, asksForMemoryOverview, candidateSupportedByUser, mayContainLongTermFact } from '../src/core/chat.mjs'
 import { SessionStore } from '../src/core/sessions.mjs'
 import { MemoryStore } from '../src/core/memory.mjs'
 import { ConfigStore } from '../src/core/config.mjs'
@@ -76,6 +76,11 @@ test('a casual question does not launch a second Codex call for memory extractio
   }
 })
 
+test('a lasting project is eligible for extraction without making casual questions eligible', () => {
+  assert.equal(mayContainLongTermFact('我正在做一个长期的机器人研究项目。'), true)
+  assert.equal(mayContainLongTermFact('你最近在做什么实验'), false)
+})
+
 test('the last exchange is remembered as a recap, so she can pick it up next time', async () => {
   const { paths, config, sessions, memory, chat } = harness()
   try {
@@ -138,8 +143,22 @@ test('unrelated recent facts do not leak into each new prompt', async () => {
   try {
     config.update({ memory: { enabled: true, autoExtract: false } })
     memory.add('panel', { content: '用户喜欢芒果' })
+    assert.equal(memory.stats().panel.durable, 1)
     await runTurn(chat, sessions, '今天的天气怎么样？')
     assert.doesNotMatch(calls[0].system, /用户喜欢芒果/)
+  } finally {
+    cleanup(paths)
+  }
+})
+
+test('a broad memory question recalls facts even without shared words', async () => {
+  const { paths, config, sessions, memory, chat, calls } = harness()
+  try {
+    config.update({ memory: { enabled: true, autoExtract: false } })
+    memory.add('panel', { content: '用户喜欢芒果' })
+    assert.equal(asksForMemoryOverview('你还记得我吗？'), true)
+    await runTurn(chat, sessions, '你还记得我吗？')
+    assert.match(calls[0].system, /用户喜欢芒果/)
   } finally {
     cleanup(paths)
   }
@@ -150,6 +169,8 @@ test('legacy recaps are labelled as conversation context, not durable facts', as
   try {
     config.update({ memory: { enabled: true, autoExtract: false } })
     memory.add('panel', { content: '上次聊天：用户说「实验很难」', source: 'conversation', type: 'fact' })
+    assert.equal(memory.stats().panel.durable, 0)
+    assert.equal(memory.stats().panel.recaps, 1)
     await runTurn(chat, sessions, '还记得上次聊天吗？')
     assert.match(calls[0].system, /最近一次对话提要/)
     assert.doesNotMatch(calls[0].system, /【关于用户的长期记忆[^]*实验很难/)
