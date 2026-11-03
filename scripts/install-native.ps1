@@ -18,12 +18,14 @@ if (-not (Test-Path $Python)) {
   & py.exe -3 -m venv $NativeDir
   if ($LASTEXITCODE -ne 0) { exit 1 }
 }
-& $Python -m pip install --disable-pip-version-check --only-binary=:all: 'PySide6-Essentials==6.12.0' 'live2d-py==1.0.0' 'PyOpenGL==3.1.10' 'pythonnet==3.2.1'
+& $Python -m pip install --disable-pip-version-check --only-binary=:all: 'PySide6-Essentials==6.12.0' 'PySide6-Addons==6.12.0' 'live2d-py==1.0.0' 'PyOpenGL==3.1.10' 'pythonnet==3.2.1'
 if ($LASTEXITCODE -ne 0) {
   Write-Host '  native   : dependency installation failed'
   exit 1
 }
-& $Python -c 'import live2d; from PySide6.QtOpenGLWidgets import QOpenGLWidget; import clr; print(1)'
+& $Python -c 'import live2d; from PySide6.QtOpenGLWidgets import QOpenGLWidget; from PySide6.QtMultimedia import QMediaPlayer; import clr; print(1)'
 if ($LASTEXITCODE -ne 0) { exit 1 }
 Write-Host '  native   : Qt/OpenGL panel ready'
+& $Python (Join-Path $Root 'native\media.py') --install-bundle
+if ($LASTEXITCODE -ne 0) { exit 1 }
 exit 0

@@ -21,14 +21,15 @@ from concurrent.futures import Future, ThreadPoolExecutor, TimeoutError as Futur
 from pathlib import Path
 
 from windows_taskbar import set_process_identity, set_window_identity
-from affect import AffectController, FaceSmoother
+from affect import AffectController, BlinkCycle, EyeGesture, FaceSmoother
 from tracking import CursorTracker
 from reaction_audio import ReactionAudioCache, leading_silence_ms
+from media import MediaLibrary, BackgroundMusic, model_label
 
 import live2d
 from OpenGL.GL import glViewport
-from PySide6.QtCore import QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal
-from PySide6.QtGui import QColor, QCursor, QFont, QIcon, QLinearGradient, QPainter, QPen, QPixmap, QPolygonF, QTextOption
+from PySide6.QtCore import QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal, QSignalBlocker
+from PySide6.QtGui import QColor, QCursor, QFont, QIcon, QKeySequence, QLinearGradient, QPainter, QPen, QPixmap, QPolygonF, QShortcut, QTextOption
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
@@ -163,10 +164,12 @@ class StatusChip(QLabel):
 
     def setText(self, value):
         full = str(value)
+        self.full_text = full
         short = self.fontMetrics().elidedText(full, Qt.TextElideMode.ElideRight, 131)
         dot = "#e0a06a" if "失败" in full or "错误" in full or "中断" in full else "#7fd47f"
         super().setText(f'<span style="color:{dot}">●</span>  {html.escape(short)}')
-        self.setToolTip(full)
+        self.setAccessibleName(full)
+        self.setToolTip("")
 
 
 class SelectionCombo(QComboBox):
@@ -621,6 +624,8 @@ class EventReader(threading.Thread):
 
 
 class Live2DView(QOpenGLWidget):
+    FACE_CHANNELS = frozenset({"browLY", "browRY", "browLAngle", "browRAngle", "browLForm", "browRForm",
+                               "eyeLSmile", "eyeRSmile", "mouthForm", "mouthOpenY", "cheek"})
     tapped = Signal(str)
     gl_initialized = Signal()
     affect_changed = Signal(str, str)
@@ -628,6 +633,7 @@ class Live2DView(QOpenGLWidget):
     def __init__(self):
         super().__init__()
         self.model = None
+        self.scene_background = QPixmap()
         self.gl_ready = False
         self.motion_map = {}
         self.expression_map = {}
@@ -653,10 +659,17 @@ class Live2DView(QOpenGLWidget):
         self.affect_params = {}
         self.param_limits = {}
         self.param_defaults = {}
+        self.legacy_face_defaults = {}
         self.displayed_affect = None
         self.interaction_menu = None
         self.visible_emotion = None
         self.active_expression = None
+        self.fixed_turn_ids = set()
+        self.authored_affect = False
+        self.independent_blink = False
+        self.blink_cycle = BlinkCycle()
+        self.eye_gesture = EyeGesture()
+        self.affect_gains = {}
         self.manual_expression_until = 0.0
         self.press_started = 0.0
         self.interaction_kind = "body"
@@ -669,7 +682,8 @@ class Live2DView(QOpenGLWidget):
         self.setMouseTracking(True)
         self.setContextMenuPolicy(Qt.ContextMenuPolicy.CustomContextMenu)
         self.customContextMenuRequested.connect(self.show_model_menu)
-        self.setToolTip("轻点头部或身体互动；按住头部再松开可轻抚。右键可选择轻抚、轻拍或逗她一下；顶部可拖动窗口。")
+        self.setAccessibleName("角色互动区")
+        self.setAccessibleDescription("轻点、轻抚或轻划人物可互动；操作说明在人物下方。")
 
     def initializeGL(self):
         live2d.glInit()
@@ -687,7 +701,23 @@ class Live2DView(QOpenGLWidget):
             self.model = live2d.Model()
             self.model.LoadModelJson(str(entry))
             self.model.Resize(self.width(), self.height())
-            self.layout_spec = layout or {}
+            model_data = json.loads(Path(entry).read_text(encoding="utf-8"))
+            self.layout_spec = dict(layout or {})
+            model_policy = model_data.get('Amadeus') or {}
+            if isinstance(model_policy, dict) and model_policy.get('TrackingMode') == 'eyes':
+                self.layout_spec['trackingMode'] = 'eyes'
+            layouts = model_policy.get('Layouts') if isinstance(model_policy, dict) else None
+            framing = self.layout_spec.get('framing', 'normal')
+            authored_layout = layouts.get(framing) if isinstance(layouts, dict) else None
+            if isinstance(authored_layout, dict):
+                for key, low, high in (('scale', .1, 4.), ('yRatio', -4., 4.)):
+                    value = authored_layout.get(key)
+                    if isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value):
+                        self.layout_spec[key] = max(low, min(high, float(value)))
+            self.authored_affect = isinstance(model_policy, dict) and model_policy.get('AffectStyle') == 'authored'
+            gains = model_policy.get('AffectGains', {}) if isinstance(model_policy, dict) else {}
+            self.affect_gains = {key: float(value) for key, value in gains.items()
+                                 if isinstance(value, (int, float)) and math.isfinite(value) and -2 <= value <= 2} if isinstance(gains, dict) else {}
             self.apply_layout()
             self.blink = BlinkShortener()
             param_ids = set(self.model.GetParamIds())
@@ -696,6 +726,10 @@ class Live2DView(QOpenGLWidget):
                 ("PARAM_EYE_L_OPEN", "PARAM_EYE_R_OPEN"),
                 ("ParamEyeLOpen", "ParamEyeROpen"),
             ) if all(param in param_ids for param in pair)), None)
+            self.independent_blink = (self.authored_affect and self.eye_open_ids is not None
+                                      and model_policy.get('EyeBlink') == 'independent')
+            self.blink_cycle = BlinkCycle()
+            self.eye_gesture = EyeGesture()
             self.eye_gaze_ids = next((pair for pair in (
                 (params.get("eyeBallX", "PARAM_EYE_BALL_X"), params.get("eyeBallY", "PARAM_EYE_BALL_Y")),
                 ("PARAM_EYE_BALL_X", "PARAM_EYE_BALL_Y"),
@@ -721,22 +755,36 @@ class Live2DView(QOpenGLWidget):
             self.affect_params = {key: param for key, names in aliases.items()
                                   if (param := next((candidate for candidate in (params.get(key), *names)
                                                      if candidate in param_ids), None))}
-            driven = set(self.affect_params.values()) | set(self.eye_gaze_ids or ())
+            self.fixed_turn_ids = {param for param in (
+                'PARAM_ANGLE_X', 'PARAM_ANGLE_Y', 'PARAM_ANGLE_Z', 'PARAM_BODY_ANGLE_X',
+                'PARAM_BODY_ANGLE_Y', 'PARAM_BODY_ANGLE_Z', 'ParamAngleX', 'ParamAngleY',
+                'ParamAngleZ', 'ParamBodyAngleX', 'ParamBodyAngleY', 'ParamBodyAngleZ'
+            ) if param in param_ids} if self.layout_spec.get('trackingMode') == 'eyes' else set()
+            driven = set(self.affect_params.values()) | set(self.eye_gaze_ids or ()) | self.fixed_turn_ids
             if self.mouth_id:
                 driven.add(self.mouth_id)
             self.param_limits = {param: (self.model.GetParamMinById(param), self.model.GetParamMaxById(param))
                                  for param in driven}
             self.param_defaults = {param: self.model.GetParamDefaultById(param) for param in driven}
+            self.legacy_face_defaults = ({param: self.param_defaults[param]
+                                         for key, param in self.affect_params.items()
+                                         if key in self.FACE_CHANNELS or key in ("eyeLOpen", "eyeROpen")}
+                                        if self.model.IsV2() is True else {})
             self.visible_emotion = None
             self.active_expression = None
             self.face_smoother = FaceSmoother()
-            self.model.SetAutoBlink(True)
+            self.model.SetAutoBlink(not self.independent_blink)
             self.model.SetAutoBreath(not self.reduced_motion)
             self.motion_map = motion_map or {}
-            self.expression_map = expression_map or {}
-            model_data = json.loads(Path(entry).read_text(encoding="utf-8"))
-            self.model_motions = model_data.get("motions") or {}
-            self.model_expressions = [item.get("name") for item in model_data.get("expressions", []) if item.get("name")]
+            authored_map = model_policy.get('ExpressionMap') if isinstance(model_policy, dict) else None
+            self.expression_map = ({key: values for key, values in authored_map.items()
+                                    if isinstance(key, str) and isinstance(values, list)
+                                    and all(isinstance(value, str) for value in values)}
+                                   if isinstance(authored_map, dict) else expression_map or {})
+            references = model_data.get("FileReferences") or {}
+            self.model_motions = model_data.get("motions") or references.get("Motions") or {}
+            self.model_expressions = [item.get("name") or item.get("Name") for item in
+                                      (model_data.get("expressions") or references.get("Expressions") or [])]
             self.idle_motion()
         finally:
             self.doneCurrent()
@@ -758,11 +806,22 @@ class Live2DView(QOpenGLWidget):
         self.model.SetOffset(2 * dx / max(1, self.height()), -2 * dy / max(1, self.height()))
 
     def idle_motion(self):
-        if self.model and not self.reduced_motion and self.model_motions.get("idle"):
-            self.model.StartRandomMotion(group="idle", priority=live2d.MotionPriority.IDLE)
+        group = (self.motion_map.get("idle") or {}).get("group", "idle")
+        if self.model and not self.reduced_motion and self.model_motions.get(group):
+            self.model.StartRandomMotion(group=group, priority=live2d.MotionPriority.IDLE)
 
     def paintGL(self):
         live2d.clearBuffer()
+        painter = None
+        if not self.scene_background.isNull():
+            painter = QPainter(self)
+            image = self.scene_background.scaled(self.size(), Qt.AspectRatioMode.KeepAspectRatioByExpanding,
+                                                 Qt.TransformationMode.SmoothTransformation)
+            painter.drawPixmap((self.width() - image.width()) // 2, (self.height() - image.height()) // 2, image)
+            # Keep Qt's painter active across native rendering. Ending it
+            # here can leave normal window frames with an uncomposited Qt
+            # background even though grabFramebuffer()/grab() looks correct.
+            painter.beginNativePainting()
         if self.model:
             now = time.monotonic()
             state = self.affect.step(now, reduced_motion=self.reduced_motion)
@@ -778,6 +837,13 @@ class Live2DView(QOpenGLWidget):
             # The SDK's drag manager adds its own slow easing. Keep it at
             # rest and drive every tracking parameter with the same filter.
             self.model.Drag(width / 2, height / 2)
+            # Cubism 2 expressions can leave their overwrites in the saved
+            # parameter state after the expression stack stops. Seed only
+            # facial channels with their neutral defaults BEFORE SDK motion,
+            # blink and expression evaluation. Never save a rendered overlay;
+            # head/cursor/body/physics channels retain their own baselines.
+            for param, value in self.legacy_face_defaults.items():
+                self.model.SetSaveParamById(param, value)
             self.model.Update()
             # SetParamById also writes the SDK's SAVED motion parameters. Using
             # it to restore post-expression values would apply e.g. f02's 0.7
@@ -787,9 +853,10 @@ class Live2DView(QOpenGLWidget):
             baseline = {param: self.model.GetParamValueById(param) for param in self.param_limits}
             pose = state["pose"]
             face_weight = min(1.0, max(0.0, state["intensity"] * 1.5)) * .85
-            facial_keys = {"browLY", "browRY", "browLAngle", "browRAngle", "browLForm", "browRForm",
-                           "eyeLSmile", "eyeRSmile", "mouthForm", "mouthOpenY", "cheek"}
-            targets, immediate_eyes = {}, set()
+            expression_weight = (1.0 if now < self.manual_expression_until else
+                                 max(0.0, min(1.0, state["intensity"])))
+            facial_keys = self.FACE_CHANNELS
+            targets, immediate_eyes, eye_multipliers = {}, set(), {}
             def put(param, value):
                 low, high = self.param_limits.get(param, (-100, 100))
                 targets[param] = max(low, min(high, value))
@@ -799,19 +866,50 @@ class Live2DView(QOpenGLWidget):
             for key, param in self.affect_params.items():
                 if key not in ("eyeLOpen", "eyeROpen"):
                     base = baseline[param]
-                    if key in facial_keys and now >= self.manual_expression_until:
+                    if key in facial_keys and self.authored_affect:
+                        # SDK expressions stay fully applied until replaced.
+                        # Match the controller's fading after-effect as well as
+                        # its semantic label; otherwise a full smile/frown can
+                        # survive all the way through a quiet idle period.
+                        rest = self.param_defaults.get(param, 0)
+                        base = rest + (base - rest) * expression_weight
+                    elif key in facial_keys and now >= self.manual_expression_until:
                         # Authored expressions can already be at their limits.
                         # Give the semantic cue room instead of adding into a
                         # saturated frown/smile that makes all emotions alike.
                         low, high = self.param_limits[param]
                         base = max(low, min(high, base)) * (1 - face_weight) + self.param_defaults.get(param, 0) * face_weight
-                    put(param, base + pose.get(key, 0))
+                        rest = self.param_defaults.get(param, 0)
+                        base = rest + (base-rest) * expression_weight
+                    gain = self.affect_gains.get(key, .25 if self.authored_affect and key in facial_keys else 1.)
+                    put(param, base + pose.get(key, 0) * gain)
             for key, value in {"angleX": eye_x * 22, "angleY": eye_y * 16,
                                "angleZ": eye_x * eye_y * -5, "bodyAngleX": eye_x * 4}.items():
                 param = self.affect_params.get(key)
                 if param:
-                    put(param, value + pose.get(key, 0) + baseline[param] * .2)
-            if self.eye_open_ids:
+                    composed = value + pose.get(key, 0) + baseline[param] * .2
+                    limit = self.layout_spec.get("headTurnLimit")
+                    if limit is not None and key in ("angleX", "angleY", "angleZ"):
+                        limit = max(0, float(limit))
+                        composed = max(-limit, min(limit, composed))
+                    put(param, composed)
+            # Optional portrait rigs keep head/torso attached at the authored
+            # pose. Suppress motion/expression turns as well as cursor turns;
+            # gaze, lids, mouth and breath remain independently animated.
+            for param in self.fixed_turn_ids:
+                put(param, self.param_defaults[param])
+            if self.eye_open_ids and self.independent_blink:
+                override = self.eye_gesture.step(state.get("eye_override") or {}, now)
+                openness = self.blink_cycle.step(now, suppressed=bool(override))
+                for key, param in zip(("eyeLOpen", "eyeROpen"), self.eye_open_ids):
+                    # Smooth the resting expression, then apply the short blink
+                    # once. A closed frame must never become the smoother's
+                    # next resting target or the next SDK saved parameter.
+                    rest = self.param_defaults.get(param, 1)
+                    base = rest + (baseline[param] - rest) * expression_weight
+                    put(param, base + pose.get(key, 0) * self.affect_gains.get(key, .25))
+                    eye_multipliers[param] = openness * override.get(key, 1.0)
+            elif self.eye_open_ids:
                 blink_values = self.blink.values(
                     self.model.GetParamValueById(self.eye_open_ids[0]),
                     self.model.GetParamValueById(self.eye_open_ids[1]), now)
@@ -820,7 +918,7 @@ class Live2DView(QOpenGLWidget):
                     value = max(low, min(high, baseline.get(param, 1) if blink_value is None else blink_value))
                     # Keep natural blinks closed even with a positive eye cue.
                     if value > 0.2:
-                        if now >= self.manual_expression_until:
+                        if now >= self.manual_expression_until and not self.authored_affect:
                             rest = self.param_defaults.get(param, 1)
                             # This model's neutral default is already fully
                             # open. A slight resting lid leaves room for an
@@ -829,24 +927,42 @@ class Live2DView(QOpenGLWidget):
                                 value = max(0, value - .1)
                                 rest = .9
                             value = value * (1 - face_weight) + rest * face_weight
-                        value += pose.get(key, 0)
+                        value += pose.get(key, 0) * self.affect_gains.get(key, .25 if self.authored_affect else 1.)
                     override = state.get("eye_override") or {}
                     if key in override or blink_value is not None or baseline.get(param, 1) <= .2:
                         immediate_eyes.add(param)
                     put(param, value * override.get(key, 1.0))
             if self.talking and self.mouth_id:
-                value = 0.25 + 0.35 * abs(math.sin((now - self.talk_start) * 15))
-                put(self.mouth_id, max(value, pose.get("mouthOpenY", 0)))
+                # Emotion changes articulation amplitude, never its lower
+                # bound: surprise and smiles must still let the lips close.
+                age = max(0.0, now - self.talk_start)
+                syllable = max(0.0, math.sin(age * 13.2 + .5 * math.sin(age * 3.7)))
+                phrase = .72 + .28 * math.sin(age * 2.1 + .8)
+                emphasis = max(0.0, min(1.0, pose.get("mouthOpenY", 0)))
+                put(self.mouth_id, (.52 + .12 * emphasis) * syllable * phrase)
+            ended = self.affect.speech_ended_at
+            closing_mouth = (not self.talking and ended is not None and 0 <= now-ended < .9)
+            if closing_mouth and self.mouth_id:
+                # A smiling rest expression may itself contain an open mouth.
+                # Stop syllable articulation at actual audio completion rather
+                # than leaving that opening for the expression's remaining hold.
+                put(self.mouth_id, 0.)
             smooth_ids = {param for key, param in self.affect_params.items()
                           if key in facial_keys or key in ("eyeLOpen", "eyeROpen")}
             targets.update(self.face_smoother.step(
                 {param: value for param, value in targets.items() if param in smooth_ids}, now,
-                immediate=immediate_eyes, speaking_mouth=self.mouth_id if self.talking else None))
+                immediate=immediate_eyes,
+                speaking_mouth=self.mouth_id if self.talking or closing_mouth else None))
+            for param, multiplier in eye_multipliers.items():
+                targets[param] *= max(0.0, min(1.0, multiplier))
             for param, value in targets.items():
                 self.model.AddParamById(param, value - self.model.GetParamValueById(param))
             self.model.Draw()
             for param, value in baseline.items():
                 self.model.AddParamById(param, value - self.model.GetParamValueById(param))
+        if painter is not None:
+            painter.endNativePainting()
+            painter.end()
 
     def timerEvent(self, event):
         if event.timerId() != self.frame_timer:
@@ -922,6 +1038,11 @@ class Live2DView(QOpenGLWidget):
         self.base_emotion = "neutral"
         self.expression_deadline = self.manual_expression_until = 0.0
         self.model.StopAllMotions()
+        # Explicit reset also clears queued previews and the SDK's expression
+        # stack, even if our semantic cache already says "neutral". Keep the
+        # face filter so the rendered handover remains continuous.
+        self.model.ResetExpressions()
+        self.active_expression = self.visible_emotion = None
         self._apply_emotion("neutral")
         self.idle_motion()
 
@@ -950,6 +1071,13 @@ class Live2DView(QOpenGLWidget):
         self.affect.set_speaking(active)
         if active and not was_talking:
             self.talk_start = time.monotonic()
+
+    def begin_utterance(self, name):
+        self.base_emotion = name
+        self.expression_deadline = self.manual_expression_until = 0.0
+        self.affect.begin_utterance(name)
+        self._apply_emotion(name)
+        self.set_speaking(True)
 
     def _apply_emotion(self, name):
         if not self.model:
@@ -1211,6 +1339,8 @@ class Panel(QMainWindow):
         self.stop_event = threading.Event()
         self.audio = MciAudio(self.bridge)
         self.config = {}
+        self.media_library = MediaLibrary()
+        self.background_music = None
         self.session_id = None
         self.sessions_requested = False
         self.user_started_chat = False
@@ -1242,6 +1372,8 @@ class Panel(QMainWindow):
         self.migrated_input = False
         self.character_content = {}
         self.pending_model = None
+        self.default_model_spec = None
+        self.loaded_model_signature = None
         self.setWindowTitle("AMADEUS")
         self.setWindowFlags(Qt.WindowType.Window | Qt.WindowType.FramelessWindowHint)
         self.resize(300, 520)
@@ -1302,7 +1434,7 @@ class Panel(QMainWindow):
             height = round(self.height() * 190 / 520)
         if self.screen.height() != height:
             self.screen.setFixedHeight(height)
-        if hasattr(self, "reaction_caption") and not self.reaction_caption.isHidden():
+        if hasattr(self, "caption_area") and not self.caption_area.isHidden():
             self._fit_reaction_caption()
 
     def _build(self):
@@ -1314,6 +1446,15 @@ class Panel(QMainWindow):
             QFrame#hinge { background:qlineargradient(x1:0,y1:0,x2:0,y2:1,stop:0 #130506,stop:.48 #853a26,stop:.55 #2c1010,stop:1 #120607); border-top:1px solid #ad6038; border-bottom:1px solid #100506; }
             QLabel#hingeBar { background:#6b3022; border:0; border-radius:2px; }
             QFrame#keypad { background:#1b0b0d; border:1px solid #693020; border-radius:2px; }
+            QFrame#companionBar { background:#251317; border-bottom:1px solid #53302a; }
+            QLabel#affectLabel { color:#e4c77f; background:transparent; font-size:11px; }
+            QPushButton#interactionHelp { color:#ccb0a6; background:transparent; border:1px solid transparent; border-radius:4px; padding:3px 6px; font-size:11px; }
+            QPushButton#interactionHelp:hover, QPushButton#interactionHelp:focus { color:#ffdc82; border-color:#985d44; }
+            QPushButton#interactionHelp:checked { background:#452027; color:#ffdc82; border-color:#854029; }
+            QScrollArea#interactionGuide, QWidget#interactionGuideBody { background:#1d0f13; border:0; }
+            QLabel#guideTitle { color:#e4c77f; font-weight:bold; background:transparent; }
+            QLabel#guideCopy { color:#d2bdb6; background:transparent; font-size:11px; }
+            QScrollArea#reactionCaptionArea { background:#2a1519; border:0; border-bottom:1px solid #5d333d; }
             QLabel#clock { background:transparent; color:#b79b96; font-size:12px; letter-spacing:1px; }
             QLabel#statusChip { background:rgba(0,0,0,155); border:1px solid #342c2d; border-radius:11px; padding:1px 7px; color:#b79b96; font-size:10px; }
             QTabWidget { background:#220e0f; }
@@ -1420,29 +1561,32 @@ class Panel(QMainWindow):
         self.affect_label = QLabel("平静")
         self.affect_label.setObjectName("affectLabel")
         self.affect_label.setTextFormat(Qt.TextFormat.PlainText)
-        self.affect_label.setStyleSheet("background:rgba(27,8,8,190);color:#d8b58b;border:1px solid #5d333d;"
-                                       "border-radius:7px;padding:2px 7px;font-size:10px;")
-        self.affect_label.setSizePolicy(QSizePolicy.Policy.Maximum, QSizePolicy.Policy.Fixed)
-        overlay_layout.addWidget(self.affect_label, 0, Qt.AlignmentFlag.AlignLeft)
+        self.affect_label.setMinimumWidth(0)
+        self.affect_label.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Preferred)
         self.reaction_caption = QLabel()
         self.reaction_caption.setTextFormat(Qt.TextFormat.PlainText)
         self.reaction_caption.setWordWrap(True)
         self.reaction_caption.setAlignment(Qt.AlignmentFlag.AlignCenter)
         self.reaction_caption.setStyleSheet(
-            "background:rgba(27,8,8,210);color:#e4c77f;border:1px solid #713824;"
-            "border-radius:6px;padding:4px 6px;font-size:11px;")
+            "background:#2a1519;color:#e4c77f;border:0;padding:4px 8px;font-size:11px;")
+        self.reaction_caption.setAccessibleName("互动字幕")
         self.reaction_caption.setMinimumWidth(0)
-        self.reaction_caption.hide()
-        overlay_layout.addWidget(self.reaction_caption)
+        self.reaction_caption.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+        self.caption_area = QScrollArea()
+        self.caption_area.setObjectName("reactionCaptionArea")
+        self.caption_area.setWidgetResizable(True)
+        self.caption_area.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        self.caption_area.setWidget(self.reaction_caption)
+        self.caption_area.hide()
         self.reaction_timer = QTimer(self)
         self.reaction_timer.setSingleShot(True)
-        self.reaction_timer.timeout.connect(self.reaction_caption.hide)
+        self.reaction_timer.timeout.connect(self._hide_reaction_caption)
         self.typing_timer = QTimer(self)
         self.typing_timer.setSingleShot(True)
         self.typing_timer.timeout.connect(self._finish_composing)
         screen_stack.addWidget(overlay)
-        # StackAll keeps the current widget on top. Adding the overlay alone
-        # left the OpenGL model above captions, cutting text across its body.
+        # Only the clock and compact connection state overlay the stage.
+        # Guidance, emotion labels and subtitles live outside the model area.
         screen_stack.setCurrentWidget(overlay)
         self.screen_header = overlay
         overlay.hide()
@@ -1466,6 +1610,21 @@ class Panel(QMainWindow):
         keypad_layout = QVBoxLayout(keypad)
         keypad_layout.setContentsMargins(0, 0, 0, 0)
         keypad_layout.setSpacing(0)
+        self.companion_bar = QFrame()
+        self.companion_bar.setObjectName("companionBar")
+        companion_row = QHBoxLayout(self.companion_bar)
+        companion_row.setContentsMargins(9, 2, 5, 2)
+        companion_row.setSpacing(4)
+        companion_row.addWidget(self.affect_label, 1)
+        self.help_toggle = QPushButton("互动说明")
+        self.help_toggle.setObjectName("interactionHelp")
+        self.help_toggle.setCheckable(True)
+        self.help_toggle.setAccessibleName("展开互动说明")
+        self.help_toggle.toggled.connect(self._toggle_interaction_help)
+        companion_row.addWidget(self.help_toggle)
+        keypad_layout.addWidget(self.companion_bar)
+        keypad_layout.addWidget(self.caption_area)
+        self.content_deck = QStackedWidget()
         self.tabs = QTabWidget()
         self.tabs.currentChanged.connect(self.tab_changed)
         refresh = QPushButton()
@@ -1475,11 +1634,15 @@ class Panel(QMainWindow):
         refresh.setToolTip("刷新状态")
         refresh.clicked.connect(self.refresh_all)
         self.tabs.setCornerWidget(refresh, Qt.Corner.TopRightCorner)
-        keypad_layout.addWidget(self.tabs, 1)
+        self.content_deck.addWidget(self.tabs)
+        keypad_layout.addWidget(self.content_deck, 1)
         self._build_chat()
         self._build_memory()
         self._build_settings()
         self._build_diag()
+        self._build_interaction_help()
+        self.help_escape = QShortcut(QKeySequence("Escape"), self)
+        self.help_escape.activated.connect(lambda: self.help_toggle.setChecked(False))
         hardware = DraggableFrame()
         hardware.setObjectName("hardware")
         hardware.setFixedHeight(30)
@@ -1507,6 +1670,75 @@ class Panel(QMainWindow):
         self.hinge.hide()
         self.keypad.hide()
         self._fit_screen()
+
+    def _build_interaction_help(self):
+        self.interaction_help = QScrollArea()
+        self.interaction_help.setObjectName("interactionGuide")
+        self.interaction_help.setWidgetResizable(True)
+        self.interaction_help.setHorizontalScrollBarPolicy(Qt.ScrollBarPolicy.ScrollBarAlwaysOff)
+        body = QWidget()
+        body.setObjectName("interactionGuideBody")
+        guide = QVBoxLayout(body)
+        guide.setContentsMargins(10, 9, 10, 10)
+        guide.setSpacing(7)
+        title = QLabel("和她互动")
+        title.setObjectName("guideTitle")
+        guide.addWidget(title)
+        self.help_context = QLabel("轻点人物，或选择下面的动作。")
+        self.help_context.setObjectName("guideCopy")
+        self.help_context.setWordWrap(True)
+        guide.addWidget(self.help_context)
+        actions = QHBoxLayout()
+        actions.setSpacing(5)
+        self.guide_actions = []
+        for label, gesture in (("轻抚头发", "pat"), ("轻拍肩膀", "body"), ("逗她一下", "swipe")):
+            button = QPushButton(label)
+            button.setStyleSheet("font-size:11px;padding:5px 3px;")
+            button.setMinimumWidth(0)
+            button.setSizePolicy(QSizePolicy.Policy.Ignored, QSizePolicy.Policy.Fixed)
+            button.clicked.connect(lambda checked=False, g=gesture: self._guide_interact(g))
+            self.guide_actions.append(button)
+            actions.addWidget(button, 1)
+        guide.addLayout(actions)
+        for heading, description in (
+            ("轻点", "点头部或身体，触发不同动作和随机台词。"),
+            ("轻抚", "按住头部约 0.65 秒再松开；也可点上方的“轻抚头发”。"),
+            ("轻划与右键", "从人物上轻划可逗她一下。右键也可选择互动，或“恢复自然”。"),
+            ("移动与缩放", "拖动顶部、转轴或边框移动窗口；拖动右下角调整大小。"),
+        ):
+            label = QLabel(heading)
+            label.setObjectName("guideTitle")
+            guide.addWidget(label)
+            copy = QLabel(description)
+            copy.setObjectName("guideCopy")
+            copy.setWordWrap(True)
+            copy.setMinimumWidth(0)
+            guide.addWidget(copy)
+        guide.addStretch(1)
+        self.interaction_help.setWidget(body)
+        self.content_deck.addWidget(self.interaction_help)
+
+    def _toggle_interaction_help(self, shown):
+        self.content_deck.setCurrentWidget(self.interaction_help if shown else self.tabs)
+        self.help_toggle.setText("收起说明" if shown else "互动说明")
+        self.help_toggle.setAccessibleName("收起互动说明" if shown else "展开互动说明")
+        if shown:
+            self._update_guide_actions()
+
+    def _update_guide_actions(self):
+        busy = self.pending_turn or self.audio_busy or self.call_item or self.avatar.talking
+        activity = getattr(getattr(self.avatar, "affect", None), "activity", "idle")
+        busy = busy or activity in ("listening", "thinking")
+        ready = bool(getattr(self.avatar, "model", None))
+        for button in self.guide_actions:
+            button.setEnabled(ready and not busy)
+        self.help_context.setText("正在倾听或回应，稍后再互动。" if busy else
+                                 "轻点人物，或选择下面的动作。" if ready else "角色正在载入…")
+
+    def _guide_interact(self, gesture):
+        self._update_guide_actions()
+        if any(button.isEnabled() for button in self.guide_actions):
+            self.avatar.menu_interact(gesture)
 
     def _build_chat(self):
         page = QWidget()
@@ -1678,12 +1910,180 @@ class Panel(QMainWindow):
         self.call_minutes.editingFinished.connect(lambda: self.patch({"proactive": {"callIntervalMs": self.call_minutes.value() * 60000}}))
         form.addRow("来电间隔", self.call_minutes)
         form.heading("角色素材")
+        self.model_choice = SelectionCombo()
+        self.model_choice.addItem("原 Live2D（默认）", '')
+        for row in self.media_library.state['models']:
+            self.model_choice.addItem(model_label(row['name']), row['file'])
+        self.model_choice.setCurrentIndex(max(0, self.model_choice.findData(self.media_library.state['selected_model'])))
+        self.model_choice.currentIndexChanged.connect(lambda _: self._select_local_model())
+        form.addRow("角色形象", self.model_choice)
+        self.model_framing = SelectionCombo()
+        self.model_framing.addItem("正常", 'normal')
+        self.model_framing.addItem("大头", 'closeup')
+        self.model_framing.setCurrentIndex(max(0, self.model_framing.findData(self.media_library.state['framing'])))
+        self.model_framing.setEnabled(bool(self.media_library.state['selected_model']))
+        self.model_framing.currentIndexChanged.connect(lambda _: self._select_local_model())
+        form.addRow("新形象取景", self.model_framing)
+        self.bgm_on = QCheckBox()
+        self.bgm_on.setChecked(self.media_library.state['enabled'])
+        self.bgm_on.clicked.connect(lambda value: self._save_media('enabled', value))
+        form.addRow("背景音乐", self.bgm_on)
+        self.bgm_choice = SelectionCombo()
+        self.background_choice = SelectionCombo()
+        self._refresh_media_choices()
+        self.bgm_choice.currentIndexChanged.connect(lambda _: self._save_media('track', self.bgm_choice.currentData()))
+        self.background_choice.currentIndexChanged.connect(
+            lambda _: self._save_media('background', self.background_choice.currentData()))
+        form.addRow("音乐曲目", self.bgm_choice)
+        self.bgm_volume = QSpinBox()
+        self.bgm_volume.setRange(0, 30)
+        self.bgm_volume.setSuffix(" %")
+        self.bgm_volume.setValue(self.media_library.state['volume'])
+        self.bgm_volume.valueChanged.connect(lambda value: self._save_media('volume', value))
+        form.addRow("音乐音量（默认 12%）", self.bgm_volume)
+        music_import = QPushButton("从文件选择音乐…")
+        music_import.clicked.connect(lambda: self._pick_media('music'))
+        form.addRow("", music_import)
+        form.addRow("人物背景", self.background_choice)
+        self.background_preview = QLabel("黑色背景")
+        self.background_preview.setAccessibleName("当前背景预览")
+        self.background_preview.setAlignment(Qt.AlignmentFlag.AlignCenter)
+        self.background_preview.setFixedHeight(72)
+        self.background_preview.setMinimumWidth(0)
+        self.background_preview.setStyleSheet("background:#0a0b09;border:1px solid #5d333d;border-radius:4px;")
+        form.addRow("背景预览", self.background_preview)
+        self.background_feedback = QLabel("选择后立即应用；默认黑色背景。")
+        self.background_feedback.setObjectName("settingsDescription")
+        self.background_feedback.setWordWrap(True)
+        self.background_feedback.setTextFormat(Qt.TextFormat.PlainText)
+        form.addRow("", self.background_feedback)
+        background_import = QPushButton("从文件选择背景…")
+        background_import.clicked.connect(lambda: self._pick_media('backgrounds'))
+        form.addRow("", background_import)
         refresh_assets = QPushButton("检查 / 安装模型素材")
         refresh_assets.clicked.connect(self.install_assets)
         form.addRow("", refresh_assets)
         scroll.setWidget(inner)
         page_layout.addWidget(scroll)
         self.tabs.addTab(page, "设置")
+
+    def _refresh_media_choices(self):
+        for combo, kind, key, empty in ((self.model_choice, 'models', 'selected_model', '原 Live2D（默认）'),
+                                        (self.bgm_choice, 'music', 'track', '不播放'),
+                                        (self.background_choice, 'backgrounds', 'background', '黑色背景（默认）')):
+            blocker = QSignalBlocker(combo)
+            combo.clear()
+            combo.addItem(empty, '')
+            for row in self.media_library.state[kind]:
+                label = model_label(row['name']) if kind == 'models' else row['name']
+                combo.addItem(label, row['file'])
+            combo.setCurrentIndex(max(0, combo.findData(self.media_library.state[key])))
+            del blocker
+        self.model_framing.setEnabled(bool(self.media_library.state['selected_model']))
+        blocker = QSignalBlocker(self.model_framing)
+        self.model_framing.setCurrentIndex(max(0, self.model_framing.findData(self.media_library.state['framing'])))
+        del blocker
+
+    def _select_local_model(self):
+        selected = self.model_choice.currentData() or ''
+        if selected and not self.media_library.path(selected):
+            self.status.setText("角色模型文件缺失，请重新导入模型包")
+            return
+        self.media_library.state['selected_model'] = selected
+        self.media_library.state['framing'] = self.model_framing.currentData() or 'normal'
+        self.model_framing.setEnabled(bool(selected))
+        self._queue_selected_model()
+        try:
+            self.media_library.save()
+        except OSError:
+            self.status.setText("形象已应用，但选择保存失败")
+
+    def _queue_selected_model(self):
+        selected = self.media_library.state.get('selected_model')
+        if selected:
+            entry = self.media_library.path(selected)
+            if not entry:
+                self.status.setText("所选模型缺失，回到默认形象")
+                self.pending_model = self.default_model_spec
+            else:
+                model_row = next((row for row in self.media_library.state.get('models', [])
+                                  if row.get('file') == selected), {})
+                self.pending_model = {'entry': str(entry), 'layout': {
+                    'scale': 1.65 if self.media_library.state.get('framing') == 'closeup' else 1.0,
+                    'yRatio': .52, 'headTurnLimit': 10,
+                    'framing': self.media_library.state.get('framing', 'normal'),
+                    'trackingMode': 'eyes' if model_row.get('tracking') == 'eyes' else 'head'},
+                    'motionMap': {'idle': {'group': 'Idle'}, 'head': {'group': 'Nod'},
+                                  'body': {'group': 'Shake'}, 'other': {'group': 'Nod'}},
+                    'expressionMap': {'微笑': ['happy', 'excited', 'elated', 'soft', 'blush', 'winking'],
+                                      '悲伤': ['sad', 'disappointed'], '生气': ['angry', 'furious', 'annoyed'],
+                                      '惊讶': ['surprised']}}
+        else:
+            self.pending_model = self.default_model_spec
+        self._load_pending_model()
+
+    def _save_media(self, key, value):
+        previous = self.media_library.state.get(key)
+        self.media_library.state[key] = value
+        if key == 'background':
+            if not self._apply_background():
+                self.media_library.state[key] = previous
+                self._refresh_media_choices()
+                return
+        elif self.background_music:
+            self.background_music.apply()
+        try:
+            self.media_library.save()
+        except OSError:
+            if key == 'background':
+                self.background_feedback.setText("背景已显示，但设置保存失败；重新打开后可能恢复旧背景。")
+            else:
+                self.status.setText("媒体已应用，但设置保存失败")
+
+    def _pick_media(self, kind):
+        filters = '音频 (*.ogg *.mp3 *.wav *.flac *.m4a)' if kind == 'music' else '图片 (*.png *.jpg *.jpeg *.webp *.bmp)'
+        file, _ = QFileDialog.getOpenFileName(self, '选择音乐' if kind == 'music' else '选择背景', '', filters)
+        if not file:
+            return
+        try:
+            key = self.media_library.import_file(file, kind)
+            self._save_media('track' if kind == 'music' else 'background', key)
+            self._refresh_media_choices()
+        except (OSError, ValueError) as error:
+            QMessageBox.warning(self, '导入媒体失败', str(error))
+
+    def _apply_media(self):
+        self._apply_background()
+        if self.background_music:
+            self.background_music.apply()
+
+    def _apply_background(self):
+        selected = self.media_library.state['background']
+        background = self.media_library.path(selected)
+        image = QPixmap(str(background)) if background else QPixmap()
+        if selected and image.isNull():
+            self.background_feedback.setText("背景无法读取：文件已丢失或图片格式无效。请重新导入。")
+            return False
+        self.avatar.scene_background = image
+        self.avatar.update()
+        if image.isNull():
+            self.background_preview.clear()
+            self.background_preview.setText("黑色背景")
+            self.background_feedback.setText("当前：黑色背景（默认）")
+        else:
+            self.background_preview.setPixmap(image.scaled(192, 68, Qt.AspectRatioMode.KeepAspectRatio,
+                                                           Qt.TransformationMode.SmoothTransformation))
+            name = next((row['name'] for row in self.media_library.state['backgrounds'] if row['file'] == selected), '自选图片')
+            self.background_feedback.setText("已应用：" + name)
+        return True
+
+    def start_media(self):
+        self.background_music = BackgroundMusic(self.media_library, self)
+        self.background_music.speaking = self.avatar.talking
+        self.background_music.calling = self.call_mode
+        self.background_music.player.errorOccurred.connect(
+            lambda *_: self.status.setText('背景音乐无法播放，请选择其他文件'))
+        self._apply_media()
 
     def set_voice_key(self):
         self.set_secret("ttsApiKey", "语音 API Key")
@@ -1853,8 +2253,8 @@ class Panel(QMainWindow):
         elif name == "assets":
             model = result.get("activeModel") or {}
             if model.get("installed"):
-                self.pending_model = model
-                self._load_pending_model()
+                self.default_model_spec = model
+                self._queue_selected_model()
             else:
                 self.status.setText("模型未安装")
         elif name == "sessions":
@@ -1994,15 +2394,24 @@ class Panel(QMainWindow):
             return
         model = self.pending_model
         self.pending_model = None
+        signature = json.dumps(model, sort_keys=True, ensure_ascii=False)
+        if signature == self.loaded_model_signature:
+            return
         try:
             self.avatar.load(model.get("entry"), model.get("motionMap"), model.get("expressionMap"),
                              model.get("layout"), model.get("parameterMap"))
+            self.loaded_model_signature = signature
         except Exception as error:
             self.status.setText("模型加载失败：" + str(error)[:45])
 
     def _set_call_mode(self, active):
         self.call_mode = active
+        if self.background_music:
+            self.background_music.calling = active
+            self.background_music.update_volume()
         if active:
+            self.help_toggle.setChecked(False)
+            self._hide_reaction_caption()
             self.booting = False
             self.splash.stop()
             self.screen_header.hide()
@@ -2045,7 +2454,7 @@ class Panel(QMainWindow):
         self.welcome_cancelled = True
         self._stop_speech()
         self.typing_timer.stop()
-        self.reaction_caption.hide()
+        self._hide_reaction_caption()
         self.avatar.set_activity("thinking")
         payload = {"sessionId": self.session_id, "text": text}
         if self.attachment:
@@ -2241,6 +2650,7 @@ class Panel(QMainWindow):
                 local_ring = next((ring_root / ("incoming" + ext)
                                    for ext in (".wav", ".mp3", ".ogg", ".m4a")
                                    if (ring_root / ("incoming" + ext)).is_file()), None)
+                local_ring = self.media_library.path(self.media_library.state.get('ringtone')) or local_ring
                 if local_ring and 4096 <= local_ring.stat().st_size <= 8 * 1024 * 1024:
                     suffix = local_ring.suffix.lower()
                     volume = self.config.get("voice", {}).get("ringVolume", 0.7)
@@ -2330,7 +2740,6 @@ class Panel(QMainWindow):
         self.audio_busy = True
         self.active_audio_item = item
         cancel_event = self.speech_cancel
-        self.avatar.emotion(item.get("emotion", "neutral"))
         text = item.get("text") or ""
         query = urllib.parse.urlencode({"text": text, "emotion": item.get("emotion") or "neutral"})
         timeout = self._speech_timeout()
@@ -2405,13 +2814,19 @@ class Panel(QMainWindow):
 
     def _set_talking(self, active):
         self.avatar.set_speaking(active)
+        if self.background_music:
+            self.background_music.speaking = active
+            self.background_music.update_volume()
 
     def _on_audio_started(self, item):
         if (not self.stop_event.is_set() and self.active_audio_item is item and
                 item.get("_generation") == self.audio_generation):
             if self.speech_prefetch is item.get("_speech_prefetch"):
                 self.speech_prefetch = None
-            self._set_talking(True)
+            self.avatar.begin_utterance(item.get("emotion", "neutral"))
+            if self.background_music:
+                self.background_music.speaking = True
+                self.background_music.update_volume()
             self._prepare_next_speech()
 
     def _stop_speech(self):
@@ -2533,6 +2948,7 @@ class Panel(QMainWindow):
             return
         self.avatar.reaction(line.get("emotion", "neutral"))
         self.reaction_caption.setText(line.get("cn") or line.get("text", ""))
+        self.caption_area.show()
         self._fit_reaction_caption()
         self.reaction_caption.show()
         self.reaction_timer.start(3500)
@@ -2559,14 +2975,21 @@ class Panel(QMainWindow):
         text = "在听" if activity == "listening" else "思考中" if activity == "thinking" else label
         self.affect_label.setText(text)
         self.affect_label.setAccessibleName("当前情绪：" + text)
+        if hasattr(self, "guide_actions"):
+            self._update_guide_actions()
+
+    def _hide_reaction_caption(self):
+        self.caption_area.hide()
+        self.reaction_timer.stop()
 
     def _fit_reaction_caption(self):
         self.reaction_caption.ensurePolished()
-        width = max(80, self.screen.width() - 24)
-        self.reaction_caption.setMaximumWidth(width)
+        width = max(80, self.keypad.width() - 12)
         bounds = self.reaction_caption.fontMetrics().boundingRect(
-            QRect(0, 0, width - 14, 1000), Qt.TextFlag.TextWordWrap, self.reaction_caption.text())
-        self.reaction_caption.setFixedHeight(max(22, bounds.height() + 12))
+            QRect(0, 0, width - 16, 10000), Qt.TextFlag.TextWordWrap, self.reaction_caption.text())
+        height = max(26, bounds.height() + 12)
+        self.reaction_caption.setFixedHeight(height)
+        self.caption_area.setFixedHeight(min(62, height))
 
     def _on_composing(self, text):
         if not self.pending_turn and not self.audio_busy:
@@ -2617,6 +3040,8 @@ class Panel(QMainWindow):
         self.call("claim", "/amadeus/client/active", "POST", {})
 
     def closeEvent(self, event):
+        if self.background_music:
+            self.background_music.stop()
         self.stop_event.set()
         self.speech_cancel.set()
         self._invalidate_speech_prefetch()
@@ -2637,6 +3062,7 @@ def main():
     icon = QIcon(str(Path(__file__).resolve().parents[1] / "scripts" / "Amadeus.ico"))
     app.setWindowIcon(icon)
     window = Panel(api)
+    QTimer.singleShot(1500, window.start_media)
     window.setWindowIcon(icon)
     window.show()
     try:

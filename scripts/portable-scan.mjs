@@ -16,6 +16,7 @@
  */
 import fs from 'node:fs'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
@@ -71,21 +72,62 @@ export function scanText(text) {
       break
     }
   }
-  if (CN_MOBILE.test(text)) hits.push('possible personal phone number')
+  // File checksums can contain an eleven-digit run; they are not contacts.
+  if (CN_MOBILE.test(text.replace(/\b[a-f0-9]{64}\b/gi, ''))) hits.push('possible personal phone number')
   return hits
+}
+
+function bundledMedia(files) {
+  const approved = new Map()
+  for (const file of files) {
+    const rel = file.rel.replace(/\\/g, '/')
+    if (rel !== 'assets/media/catalog.json' && !rel.endsWith('/assets/media/catalog.json')) continue
+    try {
+      const catalog = JSON.parse((file.inline ?? fs.readFileSync(file.abs)).toString('utf8'))
+      if (catalog.id !== 'amadeus-default-media' || !/^\d+\.\d+\.\d+$/.test(catalog.version) ||
+          !Array.isArray(catalog.files) || catalog.files.length > 2000) continue
+      const prefix = rel.slice(0, -'catalog.json'.length)
+      for (const entry of catalog.files) {
+        if (typeof entry.path !== 'string' || /\\|:/.test(entry.path) ||
+            entry.path.split('/').some((part) => !part || part === '.' || part === '..') ||
+            !/^(?:music\/[^/]+\.(?:ogg|mp3)|ringtones\/bgm13\.mp3|backgrounds\/[^/]+\.(?:jpg|jpeg|png|webp|bmp)|models\/.+\.(?:json|moc3|png|jpg|jpeg))$/i.test(entry.path) ||
+            !/^[a-f0-9]{64}$/.test(entry.sha256) || !Number.isSafeInteger(entry.size) || entry.size <= 0) continue
+        approved.set(prefix + entry.path, entry)
+      }
+    } catch { /* An invalid catalog cannot authorize opaque files. */ }
+  }
+  return approved
 }
 
 /** @param {{rel: string, abs?: string|null, inline?: Buffer}[]} files */
 export function scanFiles(files, { strict = false } = {}) {
   const problems = []
+  const approved = strict ? bundledMedia(files) : new Map()
   for (const file of files) {
     const rel = file.rel.replace(/\\/g, '/')
     const base = path.posix.basename(rel)
+    if (strict && /(^|\/)local-models(\/|$)/.test(rel)) {
+      problems.push({ rel, hits: ['local-only model or maintenance material'] })
+      continue
+    }
     if (RUNTIME_DATA_FILES.includes(base)) {
       problems.push({ rel, hits: ['runtime data file'] })
       continue
     }
-    if (strict && PRIVATE_FILE.test(rel)) {
+    let verifiedMedia = false
+    if (strict && /(^|\/)assets\/media\//.test(rel) && base !== 'catalog.json') {
+      const expected = approved.get(rel)
+      try {
+        const content = file.inline ?? fs.readFileSync(file.abs)
+        verifiedMedia = Boolean(expected && content.length === expected.size &&
+          createHash('sha256').update(content).digest('hex') === expected.sha256)
+      } catch { }
+      if (!verifiedMedia) {
+        problems.push({ rel, hits: ['unapproved or modified bundled media'] })
+        continue
+      }
+    }
+    if (strict && PRIVATE_FILE.test(rel) && !verifiedMedia) {
       problems.push({ rel, hits: ['private or opaque file type'] })
       continue
     }
@@ -108,7 +150,7 @@ export function collect(dir, out = []) {
     for (const entry of fs.readdirSync(current, { withFileTypes: true })) {
       const full = path.join(current, entry.name)
       const rel = path.relative(dir, full).replace(/\\/g, '/')
-      if (/(^|\/)(?:node_modules|\.native-venv|__pycache__|\.git|dist|work|panel-profile)(\/|$)/.test(rel)) continue
+      if (/(^|\/)(?:node_modules|\.native-venv|__pycache__|\.git|dist|work|local-models|panel-profile)(\/|$)/.test(rel)) continue
       if (entry.isDirectory()) visit(full)
       else if (entry.isFile()) out.push({ rel, abs: full })
     }

@@ -1,0 +1,173 @@
+{
+  "Version": 3,
+  "FileReferences": {
+    "Moc": "layout.moc3",
+    "Textures": [
+      "layout.4096/texture_00.png"
+    ],
+    "Physics": "layout.physics3.json",
+    "DisplayInfo": "layout.cdi3.json",
+    "Expressions": [
+      {
+        "Name": "自然",
+        "File": "authored.natural.exp3.json"
+      },
+      {
+        "Name": "微笑",
+        "File": "authored.smile.exp3.json"
+      },
+      {
+        "Name": "开心",
+        "File": "authored.happy.exp3.json"
+      },
+      {
+        "Name": "不满",
+        "File": "authored.annoyed.exp3.json"
+      },
+      {
+        "Name": "生气",
+        "File": "authored.angry.exp3.json"
+      },
+      {
+        "Name": "担心",
+        "File": "authored.worried.exp3.json"
+      },
+      {
+        "Name": "惊讶",
+        "File": "authored.surprised.exp3.json"
+      },
+      {
+        "Name": "害羞",
+        "File": "authored.shy.exp3.json"
+      },
+      {
+        "Name": "好奇",
+        "File": "authored.curious.exp3.json"
+      },
+      {
+        "Name": "专注",
+        "File": "authored.focused.exp3.json"
+      },
+      {
+        "Name": "困倦",
+        "File": "authored.sleepy.exp3.json"
+      },
+      {
+        "Name": "俏皮",
+        "File": "authored.wink.exp3.json"
+      }
+    ],
+    "Motions": {
+      "Idle": [
+        {
+          "File": "layout.idle.motion3.json"
+        }
+      ],
+      "Blink": [
+        {
+          "File": "layout.blink.motion3.json"
+        }
+      ],
+      "Nod": [
+        {
+          "File": "layout.nod.motion3.json"
+        }
+      ],
+      "Shake": [
+        {
+          "File": "layout.shake.motion3.json"
+        }
+      ],
+      "Talk": [
+        {
+          "File": "layout.talk.motion3.json"
+        }
+      ]
+    }
+  },
+  "Groups": [
+    {
+      "Target": "Parameter",
+      "Name": "EyeBlink",
+      "Ids": [
+        "ParamEyeLOpen",
+        "ParamEyeROpen"
+      ]
+    },
+    {
+      "Target": "Parameter",
+      "Name": "LipSync",
+      "Ids": [
+        "ParamMouthOpenY"
+      ]
+    }
+  ],
+  "Amadeus": {
+    "TrackingMode": "eyes",
+    "ExpressionMap": {
+      "自然": [
+        "neutral"
+      ],
+      "微笑": [
+        "soft"
+      ],
+      "开心": [
+        "happy",
+        "excited",
+        "elated"
+      ],
+      "不满": [
+        "annoyed",
+        "indifferent"
+      ],
+      "生气": [
+        "angry",
+        "furious"
+      ],
+      "担心": [
+        "sad",
+        "disappointed"
+      ],
+      "惊讶": [
+        "surprised"
+      ],
+      "害羞": [
+        "blush"
+      ],
+      "好奇": [
+        "question"
+      ],
+      "专注": [
+        "thinking",
+        "side"
+      ],
+      "困倦": [
+        "eyes_closed"
+      ],
+      "俏皮": [
+        "winking"
+      ]
+    },
+    "AffectStyle": "authored",
+    "AffectGains": {
+      "browLAngle": -0.25,
+      "browRAngle": -0.25,
+      "eyeLOpen": 0.08,
+      "eyeROpen": 0.08,
+      "eyeLSmile": 0.12,
+      "eyeRSmile": 0.12
+    },
+    "Layouts": {
+      "normal": {
+        "scale": 1.0,
+        "yRatio": 0.52
+      },
+      "closeup": {
+        "scale": 2.198,
+        "yRatio": 0.7025
+      }
+    },
+    "EyeBlink": "independent",
+    "EyeRevision": 2
+  }
+}

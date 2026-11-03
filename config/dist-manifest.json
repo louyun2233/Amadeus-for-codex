@@ -5,6 +5,7 @@
     "安装 Amadeus.cmd",
     "LICENSE",
     "README.md",
+    "CHANGELOG.md",
     "使用教程.md",
     "NOTICE",
     ".agents",
@@ -14,12 +15,14 @@
     "native",
     "src",
     "config",
+    "assets/media",
     "persona",
     "scripts",
     "docs"
   ],
   "exclude": [
     "work",
+    "local-models",
     "node_modules",
     "dist",
     ".git",
@@ -71,6 +74,8 @@
     "persona/kurisu.json",
     "scripts/character-source.mjs",
     "scripts/qwen-watch.vbs",
-    "scripts/install.ps1"
+    "scripts/install.ps1",
+    "native/media.py",
+    "assets/media/catalog.json"
   ]
 }

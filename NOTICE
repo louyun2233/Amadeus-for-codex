@@ -58,6 +58,15 @@ Release asset
   - Opening animation and call-screen logo — native/sprite_logo.png and
     native/amadeus-logo.png. Copied from the Amadeus installation supplied by
     the project maintainer. These assets are separate from the MIT code license.
+  - Runtime media — assets/media (catalogued in assets/media/catalog.json).
+    The maintainer supplied five authored Live2D runtime variants, fourteen
+    background music tracks, eight scene images and a bgm13 incoming-call
+    music file, and explicitly requested their inclusion in v1.0.0.
+    The models were prepared using See-through and PSD2Live. Their outputs,
+    the character artwork, scene images and music are separate from the MIT
+    source-code license; rights remain with their respective rights holders.
+    Editing projects, model-authoring tools and cloned voice samples are not
+    included. See docs/随附素材与使用.md for the exact distribution scope.
 
 Installed on the user's machine, not bundled in the release ZIP
 ---------------------------------------------------------------
@@ -79,9 +88,12 @@ Makise Kurisu, Steins;Gate and all related characters, names, voices and
 dialogue are the property of MAGES. / Nitroplus and their respective rights
 holders.
 
-Live2D character models and voice samples are not distributed in the release
-ZIP. Models are downloaded on demand into the user's own data directory and
-are intended for personal, non-commercial study only.
+The five optional runtime model variants and catalogued music/backgrounds
+are included in v1.0.0 at the maintainer's request. The original default
+model remains an on-demand download. Voice-cloning samples, personal voice
+libraries, credentials and editing projects are not included. The code's
+MIT license does not grant rights to third-party artwork, characters, music
+or voices.
 
 This project is not affiliated with OpenAI, MAGES., Nitroplus, or any of the
 upstream repositories listed above.

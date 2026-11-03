@@ -3,6 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
+import { createHash } from 'node:crypto'
 import { fileURLToPath } from 'node:url'
 import { scanFiles, scanText, collect } from '../scripts/portable-scan.mjs'
 
@@ -52,6 +53,26 @@ test('a key inside a packaged file is refused', () => {
   assert.ok(!JSON.stringify(problems).includes(fakeKey), 'diagnostics must not print key fragments')
 })
 
+test('local model projects stay out of source collection and are refused if explicitly packaged', () => {
+  const tmp = fs.mkdtempSync(path.join(os.tmpdir(), 'amadeus-local-model-scan-'))
+  const cleanupRoot = fs.realpathSync(tmp)
+  try {
+    const privateDir = path.join(tmp, 'local-models', 'maintenance')
+    fs.mkdirSync(privateDir, { recursive: true })
+    const file = path.join(privateDir, 'private.json')
+    const fakeKey = ['sk', 'abcdefghijklmnopqrstuvwx'].join('-')
+    fs.writeFileSync(file, JSON.stringify({ sample: fakeKey }))
+    fs.writeFileSync(path.join(tmp, 'README.md'), 'public source')
+    assert.deepEqual(collect(tmp).map((entry) => entry.rel), ['README.md'])
+    const explicit = [{ rel: 'pkg/local-models/maintenance/private.json', abs: file }]
+    assert.match(scanFiles(explicit)[0].hits.join(' '), /openai-style key/)
+    assert.match(scanFiles(explicit, { strict: true })[0].hits.join(' '), /local-only/)
+  } finally {
+    assert.equal(fs.realpathSync(tmp), cleanupRoot)
+    fs.rmSync(cleanupRoot, { recursive: true, force: true })
+  }
+})
+
 test('personal Windows profile paths are refused without echoing the username', () => {
   const profile = ['C:', 'Users', 'RealPerson', 'AppData'].join('\\')
   const hits = scanText(`dataDir = ${profile}`)
@@ -83,6 +104,35 @@ test('the release rejects private media, nested archives and environment files',
 test('runtime data files are refused by name', () => {
   const problems = scanFiles([{ rel: 'pkg/secrets.json', inline: Buffer.from('{}') }])
   assert.deepEqual(problems, [{ rel: 'pkg/secrets.json', hits: ['runtime data file'] }])
+})
+
+test('only catalogued and hash-matched shared media pass the release gate', () => {
+  const content = Buffer.from('approved background music fixture')
+  const entry = { path: 'music/bgm10.ogg', size: content.length,
+    sha256: createHash('sha256').update(content).digest('hex') }
+  const catalog = { rel: 'pkg/assets/media/catalog.json', inline: Buffer.from(JSON.stringify({
+    id: 'amadeus-default-media', version: '1.0.0', files: [entry],
+  })) }
+  const media = { rel: 'pkg/assets/media/music/bgm10.ogg', inline: content }
+  assert.deepEqual(scanFiles([catalog, media], { strict: true }), [])
+  const modified = { ...media, inline: Buffer.from('different music') }
+  assert.match(scanFiles([catalog, modified], { strict: true })[0].hits.join(' '), /modified bundled media/)
+  assert.match(scanFiles([media], { strict: true })[0].hits.join(' '), /unapproved/)
+  const privateVoice = { rel: 'pkg/assets/media/music/clone.wav', inline: content }
+  assert.match(scanFiles([catalog, privateVoice], { strict: true })[0].hits.join(' '), /unapproved/)
+})
+
+test('checksum digits do not hide real contact details or authorize traversal', () => {
+  const digits = ['138', '0013', '8000'].join('')
+  const checksum = 'a'.repeat(20) + digits + 'b'.repeat(33)
+  assert.deepEqual(scanText(JSON.stringify({ sha256: checksum })), [])
+  assert.ok(scanText('phone=' + digits).includes('possible personal phone number'))
+  const data = Buffer.from('fixture')
+  const invalid = { rel: 'pkg/assets/media/catalog.json', inline: Buffer.from(JSON.stringify({
+    id: 'amadeus-default-media', version: '1.0.0', files: [{path: '../clone.mp3',
+      size: data.length, sha256: createHash('sha256').update(data).digest('hex')}],
+  })) }
+  assert.equal(scanFiles([invalid, { rel: 'pkg/clone.mp3', inline: data }], { strict: true }).length, 1)
 })
 
 test('ordinary prose is not mistaken for a secret', () => {

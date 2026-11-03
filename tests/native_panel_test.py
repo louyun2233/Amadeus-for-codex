@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import threading
+import tempfile
 import unittest
 from pathlib import Path
 from types import SimpleNamespace
@@ -11,8 +12,8 @@ from unittest.mock import patch
 os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "native"))
 from PySide6.QtCore import Signal, QPoint, QPointF, Qt
-from PySide6.QtGui import QWheelEvent
-from PySide6.QtWidgets import QApplication, QWidget
+from PySide6.QtGui import QWheelEvent, QImage, QColor
+from PySide6.QtWidgets import QApplication, QWidget, QScrollArea
 from PySide6.QtTest import QTest
 import panel as p
 
@@ -34,6 +35,10 @@ class FakeAvatar(QWidget):
     def set_speaking(self, active):
         self.talking = active
 
+    def begin_utterance(self, name):
+        self.emotion(name)
+        self.set_speaking(True)
+
     def reaction(self, value):
         self.last_emotion = value
 
@@ -51,12 +56,172 @@ class FakeAudio:
 
 
 class NativePanelTests(unittest.TestCase):
+    def test_all_three_media_selectors_accept_real_mouse_and_keyboard_input(self):
+        from media import MediaLibrary
+        w = self.window
+        library = w.media_library
+        for i, color in enumerate(('#408080', '#804080')):
+            music = library.root / ('sample' + str(i) + '.mp3')
+            music.write_bytes((b'local synthetic music' + str(i).encode()) * 300)
+            library.import_file(music, 'music')
+            image = QImage(30, 20, QImage.Format.Format_RGB32)
+            image.fill(QColor(color))
+            background = library.root / ('image' + str(i) + '.png')
+            image.save(str(background))
+            library.import_file(background, 'backgrounds')
+            model = library.root / 'models' / str(i) / 'layout.model3.json'
+            model.parent.mkdir(parents=True)
+            model.write_text('{}', encoding='utf-8')
+            library.state['models'].append({'name': 'model' + str(i), 'file': model.relative_to(library.root).as_posix(), 'tracking': 'eyes'})
+        library.save()
+        w._refresh_media_choices()
+        w.resize(430, 780)
+        w.tabs.setCurrentIndex(2)
+        w.show()
+        w.raise_()
+        w.activateWindow()
+        QTest.qWait(100)
+        scroll = w.tabs.currentWidget().findChild(QScrollArea)
+        applied = []
+        w.background_music = SimpleNamespace(apply=lambda: applied.append(library.state['track']), stop=lambda: None)
+        for combo, key in ((w.model_choice, 'selected_model'), (w.bgm_choice, 'track'), (w.background_choice, 'background')):
+            self.assertEqual(combo.count(), 3)
+            scroll.ensureWidgetVisible(combo)
+            QTest.qWait(30)
+            QTest.mousePress(combo, Qt.MouseButton.LeftButton)
+            QTest.qWait(30)
+            self.assertTrue(combo.view().isVisible(), key + ' popup must open by mouse')
+            index = combo.model().index(1, 0)
+            combo.view().scrollTo(index)
+            QTest.mouseMove(combo.view().viewport(), combo.view().visualRect(index).center())
+            QTest.qWait(80)
+            QTest.mouseRelease(combo.view().viewport(), Qt.MouseButton.LeftButton,
+                               pos=combo.view().visualRect(index).center())
+            QTest.qWait(30)
+            self.assertEqual(combo.currentIndex(), 1, (key, combo.view().visualRect(index), combo.view().size(), w.status.text()))
+            self.assertEqual(MediaLibrary(library.root).state[key], combo.itemData(1), key)
+            combo.setFocus()
+            QTest.keyClick(combo, Qt.Key.Key_End)
+            self.assertEqual(combo.currentIndex(), 2, key)
+            self.assertEqual(MediaLibrary(library.root).state[key], combo.itemData(2), key)
+        self.assertTrue(applied)
+        self.assertFalse(w.avatar.scene_background.isNull())
+        reopened = MediaLibrary(library.root)
+        w.media_library = reopened
+        w._refresh_media_choices()
+        for combo, key in ((w.model_choice, 'selected_model'), (w.bgm_choice, 'track'), (w.background_choice, 'background')):
+            self.assertEqual(combo.count(), 3)
+            self.assertEqual(combo.currentData(), reopened.state[key])
+
+    def test_configured_call_music_wins_over_legacy_ring_and_stops_on_dismissal(self):
+        library = self.window.media_library
+        ring = library.root / 'rings' / 'requested.mp3'
+        ring.parent.mkdir(parents=True)
+        data = b'synthetic requested call music' * 220
+        ring.write_bytes(data)
+        library.state['ringtone'] = ring.relative_to(library.root).as_posix()
+        self.window.config = {'voice': {'ringEnabled': True, 'ringVolume': .2}}
+        self.window.pool.shutdown(wait=False)
+        jobs = []
+        self.window.pool = SimpleNamespace(submit=lambda fn, *args: jobs.append(lambda: fn(*args)), shutdown=lambda **kw: None)
+        self.window._utterance({'id': 'ring-priority', 'kind': 'call', 'text': 'synthetic'})
+        self.assertFalse(any(call[0][0] == 'ring' for call in self.calls))
+        self.assertEqual(len(jobs), 1)
+        jobs[0]()
+        self.assertEqual(self.window.audio.played[0][0][:4], ('ring', data, '.mp3', True))
+        self.window.deny_call()
+        jobs[0]()
+        self.assertEqual(len(self.window.audio.played), 1)
+        self.assertIn('ring', self.window.audio.stopped)
+
+    def test_optional_model_can_track_eyes_without_changing_default_model(self):
+        import tempfile
+        from media import MediaLibrary
+        with tempfile.TemporaryDirectory() as folder:
+            library = MediaLibrary(Path(folder) / 'library')
+            entry = library.root / 'models' / 'test' / 'layout.model3.json'
+            entry.parent.mkdir(parents=True)
+            entry.write_text('{}', encoding='utf-8')
+            key = entry.relative_to(library.root).as_posix()
+            library.state['models'] = [{'name': 'fixture', 'file': key, 'tracking': 'eyes'}]
+            library.state['selected_model'] = key
+            self.window.media_library = library
+            self.window._queue_selected_model()
+            self.assertEqual(self.window.pending_model['layout']['trackingMode'], 'eyes')
+            library.state['framing'] = 'closeup'
+            self.window._queue_selected_model()
+            self.assertEqual(self.window.pending_model['layout']['framing'], 'closeup')
+            library.state['selected_model'] = ''
+            self.window._queue_selected_model()
+            self.assertIs(self.window.pending_model, self.window.default_model_spec)
+
+    def background_fixture(self):
+        import tempfile
+        from media import MediaLibrary
+        temporary = tempfile.TemporaryDirectory()
+        self.addCleanup(temporary.cleanup)
+        root = Path(temporary.name)
+        image = QImage(80, 60, QImage.Format.Format_RGB32)
+        image.fill(QColor('#408080'))
+        source = root / 'my-background.png'
+        image.save(str(source))
+        self.window.media_library = MediaLibrary(root / 'library')
+        key = self.window.media_library.import_file(source, 'backgrounds')
+        self.window._refresh_media_choices()
+        return source, key
+
+    def test_background_selection_updates_stage_and_survives_reload(self):
+        from media import MediaLibrary
+        source, key = self.background_fixture()
+        w = self.window
+        w.background_choice.setCurrentIndex(1)
+        self.assertFalse(w.avatar.scene_background.isNull())
+        self.assertEqual(w.avatar.scene_background.toImage().pixelColor(0, 0).name(), '#408080')
+        self.assertEqual(MediaLibrary(w.media_library.root).state['background'], key)
+        w.media_library = MediaLibrary(w.media_library.root)
+        w._refresh_media_choices()
+        self.assertEqual(w.background_choice.currentData(), key, 'rebuilding options must not reset the saved choice')
+        w._apply_background()
+        self.assertFalse(w.avatar.scene_background.isNull())
+        w.background_choice.setCurrentIndex(0)
+        self.assertTrue(w.avatar.scene_background.isNull())
+        self.assertEqual(MediaLibrary(w.media_library.root).state['background'], '')
+
+    def test_background_save_failure_does_not_prevent_display_and_is_visible(self):
+        source, key = self.background_fixture()
+        with patch.object(self.window.media_library, 'save', side_effect=PermissionError('fixture')):
+            self.window.background_choice.setCurrentIndex(1)
+        self.assertFalse(self.window.avatar.scene_background.isNull())
+        self.assertIn('保存失败', self.window.background_feedback.text())
+
+    def test_missing_background_keeps_previous_picture_and_reports_error(self):
+        source, key = self.background_fixture()
+        w = self.window
+        w.background_choice.setCurrentIndex(1)
+        before = w.avatar.scene_background.cacheKey()
+        w.media_library.state['backgrounds'].append({'name': 'missing', 'file': 'backgrounds/missing.jpg'})
+        w._refresh_media_choices()
+        w.background_choice.setCurrentIndex(2)
+        self.assertEqual(w.avatar.scene_background.cacheKey(), before)
+        self.assertEqual(w.media_library.state['background'], key)
+        self.assertIn('无法读取', w.background_feedback.text())
+
+    def test_manual_background_import_applies_immediately(self):
+        source, key = self.background_fixture()
+        with patch.object(p.QFileDialog, 'getOpenFileName', return_value=(str(source), '')):
+            self.window._pick_media('backgrounds')
+        self.assertEqual(self.window.background_choice.currentData(), key)
+        self.assertFalse(self.window.avatar.scene_background.isNull())
+
     @classmethod
     def setUpClass(cls):
         cls.app = QApplication.instance() or QApplication([])
 
     def setUp(self):
+        from media import MediaLibrary
+        self.local_media = tempfile.TemporaryDirectory()
         self.patches = [patch.object(p, "Live2DView", FakeAvatar),
+                        patch.object(p, 'MediaLibrary', lambda: MediaLibrary(Path(self.local_media.name) / 'media')),
                         patch.object(p, "MciAudio", FakeAudio),
                         patch.object(p.EventReader, "start", lambda self: None),
                         patch.object(p.Panel, "call", self.capture_call)]
@@ -78,6 +243,7 @@ class NativePanelTests(unittest.TestCase):
         self.app.processEvents()
         for item in reversed(self.patches):
             item.stop()
+        self.local_media.cleanup()
 
     def test_long_message_wraps_without_interpreting_html(self):
         raw = "<b>literal markup</b> " + "long_filename_" * 45
@@ -453,18 +619,74 @@ class NativePanelTests(unittest.TestCase):
         self.window.avatar.affect_changed.emit("idle", "soft")
         self.assertEqual(self.window.affect_label.text(), "放松")
 
+    def test_speech_emotion_changes_on_device_start_not_synthesis_queue(self):
+        w = self.window
+        w.avatar.emotion("soft")
+        w.pool.submit = lambda *args: None
+        w.audio_queue = [{"kind": "say", "emotion": "annoyed", "text": "synthetic"}]
+        w._next_audio()
+        item = w.active_audio_item
+        self.assertEqual(w.avatar.last_emotion, "soft")
+        self.assertFalse(w.avatar.talking)
+        w._on_audio_started(item)
+        self.assertEqual(w.avatar.last_emotion, "annoyed")
+        self.assertTrue(w.avatar.talking)
+
     def test_reaction_caption_wraps_at_minimum_phone_width(self):
         self.window.resize(270, 468)
         self.window.show()
         self.app.processEvents()
-        self.window.reaction_caption.setText("……别把我当小孩。我也没说讨厌。" * 2)
+        self.window.reaction_caption.setText("……别把我当小孩。我也没说讨厌。" * 12)
+        self.window.caption_area.show()
         self.window._fit_reaction_caption()
-        self.window.reaction_caption.show()
         self.app.processEvents()
         label = self.window.reaction_caption
-        self.assertLessEqual(label.width(), self.window.screen.width() - 24)
+        self.assertLessEqual(label.width(), self.window.keypad.width())
         self.assertGreater(label.height(), label.fontMetrics().height() * 2)
-        self.assertTrue(self.window.screen_header.rect().contains(label.geometry()))
+        self.assertLessEqual(self.window.caption_area.height(), 62)
+        self.assertGreater(self.window.caption_area.verticalScrollBar().maximum(), 0)
+        self.assertEqual(self.window.caption_area.horizontalScrollBar().maximum(), 0)
+        self.assertFalse(self.window.screen.isAncestorOf(label))
+        self.assertGreaterEqual(self.window.caption_area.mapTo(self.window, QPoint()).y(),
+                                self.window.screen.mapTo(self.window, QPoint()).y() + self.window.screen.height())
+        self.window._hide_reaction_caption()
+        self.assertTrue(self.window.caption_area.isHidden())
+
+    def test_interaction_help_is_explicit_and_keeps_stage_and_chat_draft(self):
+        w = self.window
+        w.resize(270, 468)
+        w.show()
+        self.app.processEvents()
+        stage = w.screen.geometry()
+        w.input.setText("保留未发送的内容")
+        w.help_toggle.setChecked(True)
+        self.app.processEvents()
+        self.assertIs(w.content_deck.currentWidget(), w.interaction_help)
+        self.assertEqual(w.screen.geometry(), stage)
+        self.assertFalse(w.screen.isAncestorOf(w.interaction_help))
+        self.assertFalse(w.screen.isAncestorOf(w.affect_label))
+        self.assertEqual(w.interaction_help.horizontalScrollBar().maximum(), 0)
+        w.help_toggle.setChecked(False)
+        self.assertIs(w.content_deck.currentWidget(), w.tabs)
+        self.assertEqual(w.input.text(), "保留未发送的内容")
+        self.assertEqual(w.status.toolTip(), "")
+
+    def test_guide_buttons_recheck_busy_state_and_incoming_call_closes_help(self):
+        w = self.window
+        actions = []
+        w.avatar.model = object()
+        w.avatar.menu_interact = actions.append
+        w.help_toggle.setChecked(True)
+        self.assertTrue(all(button.isEnabled() for button in w.guide_actions))
+        w.guide_actions[0].click()
+        self.assertEqual(actions, ["pat"])
+        w.pending_turn = True
+        w._guide_interact("swipe")
+        self.assertEqual(actions, ["pat"])
+        self.assertTrue(all(not button.isEnabled() for button in w.guide_actions))
+        w._set_call_mode(True)
+        self.assertFalse(w.help_toggle.isChecked())
+        self.assertTrue(w.keypad.isHidden())
 
     def test_finished_external_audio_resumes_pending_chat_expression(self):
         self.window.pending_turn = True
@@ -528,9 +750,9 @@ class NativePanelTests(unittest.TestCase):
         second = self.window.active_audio_item
         self.jobs[1]()
         self.assertEqual([r[0] for r in self.requests], ["first", "second"], "use prefetch, not a duplicate request")
-        self.assertEqual(self.window.avatar.last_emotion, "happy")
         self.assertEqual(self.window.audio.played[1][0][1], b"second" * 60)
         self.capture_prefetch_start(second)
+        self.assertEqual(self.window.avatar.last_emotion, "happy")
         self.assertEqual(len(self.prepares), 2, "only then prepare third")
 
     def test_playback_worker_waits_on_same_inflight_prefetch_without_blocking_qt(self):

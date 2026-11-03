@@ -83,10 +83,7 @@ export function looksLikeJapanese(text) {
 }
 
 function firstTag(text) {
-  const m = String(text ?? '').match(TAG_RE)
-  if (!m || m.length === 0) return null
-  const inner = m[0].slice(1, -1)
-  return EMOTIONS.includes(inner) ? inner : null
+  return String(text ?? '').match(LEADING_TAG_RE)?.[1] || null
 }
 
 function emotionalSegments(text, initialEmotion, fallbackEmotion) {
@@ -137,7 +134,7 @@ export function parseReply(raw) {
     const segments = emotionalSegments(text, explicitEmotion, inferEmotion(fallback))
     return {
       parsed: false,
-      emotion: explicitEmotion || inferEmotion(fallback),
+      emotion: explicitEmotion || segments[0]?.emotion || inferEmotion(fallback),
       zh: fallback,
       ja: looksLikeJapanese(fallback) ? fallback : '',
       segments,
@@ -152,7 +149,7 @@ export function parseReply(raw) {
 
   return {
     parsed: true,
-    emotion: normalizeEmotion(globalEmotion, 'neutral'),
+    emotion: normalizeEmotion(explicitEmotion || segments[0]?.emotion || globalEmotion, 'neutral'),
     zh: stripTags(zh),
     ja,
     segments,

@@ -48,6 +48,7 @@ if (process.platform === 'win32' && exists(python)) {
     'assert sys.version_info >= (3, 11) and sys.maxsize > 2**32',
     'import live2d',
     'from PySide6.QtOpenGLWidgets import QOpenGLWidget',
+    'from PySide6.QtMultimedia import QMediaPlayer',
     'from OpenGL.GL import glViewport',
     'import clr',
     'print("native-dependencies-ready")',
@@ -55,6 +56,24 @@ if (process.platform === 'win32' && exists(python)) {
   record('Qt / OpenGL / Live2D / Windows speech dependencies',
     result.status === 0 && result.stdout.includes('native-dependencies-ready'),
     result.status === 0 ? '' : 'Run the desktop installer to repair the native environment')
+  const media = spawnSync(python, ['-c', [
+    'import json, sys',
+    'from pathlib import Path',
+    'sys.path.insert(0, str(Path.cwd() / "native"))',
+    'from media import MediaLibrary',
+    'library = MediaLibrary()',
+    'kinds = ("music", "backgrounds", "models")',
+    'counts = {k: len(library.state[k]) for k in kinds}',
+    'missing = sum(not library.path(row["file"]) for k in kinds for row in library.state[k])',
+    'missing += int(bool(library.state.get("ringtone")) and not library.path(library.state["ringtone"]))',
+    'print("MEDIA-CHECK " + json.dumps({"counts": counts, "missing": missing, "readable": not library.load_error or library.recovered}))',
+  ].join('\n')], { cwd: ROOT, encoding: 'utf8', timeout: 15000, windowsHide: true,
+    env: dataFlag >= 0 ? { ...process.env, AMADEUS_DATA_DIR: paths.dataRoot } : process.env })
+  let catalog = null
+  try { catalog = JSON.parse((media.stdout || '').split(/\r?\n/).find((line) => line.startsWith('MEDIA-CHECK '))?.slice(12)) } catch { /* reported below */ }
+  record('persistent media catalog and registered files', media.status === 0 && catalog?.readable && catalog.missing === 0,
+    catalog ? `${catalog.counts.music} music, ${catalog.counts.backgrounds} backgrounds, ${catalog.counts.models} models; ${catalog.missing} missing`
+      : 'Media catalog check failed')
 }
 
 let info = null

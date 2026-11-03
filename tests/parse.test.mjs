@@ -3,6 +3,20 @@ import assert from 'node:assert/strict'
 import { parseReply, splitSentences } from '../src/core/parse.mjs'
 import { EMOTIONS, inferEmotion } from '../src/core/emotion.mjs'
 
+test('later emotion tags never apply retroactively to the preceding sentence', () => {
+  const parsed = parseReply('JP: 大丈夫、心配しないで。【annoyed】もう、からかわないで。\nCN: 别担心。真是的，别开玩笑。')
+  assert.deepEqual(parsed.segments.map(s => s.emotion), ['soft', 'annoyed'])
+  assert.equal(parsed.emotion, 'soft')
+  const plain = parseReply('大丈夫。【annoyed】もう、やめて。')
+  assert.deepEqual(plain.segments.map(s => s.emotion), ['soft', 'annoyed'])
+})
+
+test('translated emotion tags do not override untagged spoken Japanese', () => {
+  const parsed = parseReply('JP: 大丈夫、心配しないで。\nCN: 【angry】别担心。')
+  assert.equal(parsed.segments[0].emotion, 'soft')
+  assert.equal(parsed.emotion, 'soft')
+})
+
 test('splitSentences works without lookbehind', () => {
   const out = splitSentences('ふふっ、やるじゃない。それで、次はどうするの？')
   assert.equal(out.length, 2)

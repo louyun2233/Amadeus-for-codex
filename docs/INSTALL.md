@@ -13,9 +13,11 @@
 
 ## 安装（发行包）
 
-1. 下载 [最新源码 ZIP](https://github.com/louyun2233/Amadeus-for-codex/archive/refs/heads/main.zip)，或在 GitHub 的 `main` 分支选择 **Code → Download ZIP**。源码包含一键安装入口；历史 0.1.4 安装包不包含本轮后续修复。把压缩包**完整解压**到固定目录（路径含空格也可以）；不要在压缩包预览窗口内运行脚本。
+1. 下载 [v1.0.0 安装包](https://github.com/louyun2233/Amadeus-for-codex/releases/download/v1.0.0/amadeus-codex-1.0.0.zip)。开发者也可下载 [main 分支源码 ZIP](https://github.com/louyun2233/Amadeus-for-codex/archive/refs/heads/main.zip)。把压缩包**完整解压**到固定目录（路径含空格也可以）；不要在压缩包预览窗口内运行脚本。
 2. 双击解压目录里的 **`安装 Amadeus.cmd`**。安装窗口会报告依赖安装、EXE 构建、Codex 注册、服务启动和角色素材的结果。安装完成后按任意键关闭安装窗口。
 3. 重启 Codex Desktop，让新 MCP 连接生效。此后可随 Codex 打开面板，或双击同一目录中的 `Amadeus.exe` 单独打开。
+
+安装器还会校验随包提供的五套新模型、14 首 BGM、8 张背景和 bgm13 来电音乐，复制并登记到 `%USERPROFILE%\.amadeus\media`。之后在「设置 → 角色素材」中直接选择。新安装默认保留原形象和黑底，播放音量为 12% 的 bgm10；升级保留已有选择及自定义文件。素材说明见 [随附素材与使用](随附素材与使用.md)。
 
 首次使用时，可在「设置」里开启需要的语音、任务播报和记忆。**没有克隆音色也能先使用文字对话**；克隆是后续的独立步骤，详见 [从零克隆教程](../使用教程.md#3-从零制作本地克隆音色)。
 
@@ -80,7 +82,7 @@ powershell -ExecutionPolicy Bypass -File scripts\install.ps1 -Marketplace
 ```toml
 [marketplaces.amadeus]
 source_type = "local"
-source = 'C:\path\to\amadeus-codex-0.1.4'
+source = 'C:\path\to\amadeus-codex-1.0.0'
 
 [plugins."amadeus@amadeus"]
 enabled = true
@@ -122,7 +124,7 @@ node bin\amadeus.mjs assets install-file kurisu-model "D:\你自己\kurisu.tar.g
 2. 把新版本**完整解压**到原项目目录，保留目录位置不变。双击新版本的 `安装 Amadeus.cmd` 重新安装，并在完成后重启 Codex Desktop。命令行用户也可以运行 `scripts\desktop-install.ps1`。
 3. 检查面板是否打开，再按需要确认原有语音和记忆设置。
 
-注册块会重复使用，不会叠加；用户数据在 `%LOCALAPPDATA%\Amadeus`，模型缓存在 `%LOCALAPPDATA%\Amadeus\cache`，两者都不在发行包内。升级不会自动迁移单独安装的 Qwen TTS WebUI，也不会重制克隆音色。
+注册块会重复使用，不会叠加；用户数据在 `%LOCALAPPDATA%\Amadeus`，默认模型缓存在 `%LOCALAPPDATA%\Amadeus\cache`，个人音乐、背景与可选角色在 `%USERPROFILE%\.amadeus\media`。这些目录不在发行包内。升级不会自动迁移单独安装的 Qwen TTS WebUI，也不会重制克隆音色。显式设置过 `AMADEUS_MEDIA_DIR` 或 `AMADEUS_DATA_DIR` 时继续使用相应目录。
 
 ## 卸载
 

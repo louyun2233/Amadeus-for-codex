@@ -3,6 +3,7 @@ node_modules/
 __pycache__/
 dist/
 work/
+local-models/
 panel-profile/
 docs/screenshots/
 *.log
@@ -38,3 +39,5 @@ qwen-service.json
 *.mp4
 *.webm
 *.bak
+!assets/media/music/*.ogg
+!assets/media/ringtones/bgm13.mp3

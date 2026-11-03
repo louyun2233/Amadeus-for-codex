@@ -1,0 +1,799 @@
+{
+  "id": "amadeus-default-media",
+  "version": "1.0.0",
+  "music": [
+    {
+      "name": "bgm05",
+      "file": "music/ed140fec8bc7bf943fe8.ogg"
+    },
+    {
+      "name": "bgm06",
+      "file": "music/8d884efb45d4a8ffc7ec.ogg"
+    },
+    {
+      "name": "bgm07",
+      "file": "music/031a4484f83ae300c855.ogg"
+    },
+    {
+      "name": "bgm10",
+      "file": "music/a802310fbdf6c0929cca.ogg"
+    },
+    {
+      "name": "bgm13",
+      "file": "music/00576458137f8cf94a05.ogg"
+    },
+    {
+      "name": "bgm16",
+      "file": "music/1ace8ce0c6e1e01ef08a.ogg"
+    },
+    {
+      "name": "bgm18",
+      "file": "music/c991bb08b08267aacf55.ogg"
+    },
+    {
+      "name": "bgm20",
+      "file": "music/a96a24f45fe36aadf71a.ogg"
+    },
+    {
+      "name": "bgm23",
+      "file": "music/0a922182cd9ab976c890.ogg"
+    },
+    {
+      "name": "bgm24~1",
+      "file": "music/af891714281b2eea4b54.ogg"
+    },
+    {
+      "name": "bgm25",
+      "file": "music/253022088b0dcaf23f9d.ogg"
+    },
+    {
+      "name": "bgm26",
+      "file": "music/c40f5a0a5cb3267cb3ce.ogg"
+    },
+    {
+      "name": "bgm36nl~1",
+      "file": "music/196d72ba70955d48481b.ogg"
+    },
+    {
+      "name": "fdbgm03",
+      "file": "music/d482fe553159a73f6467.ogg"
+    }
+  ],
+  "backgrounds": [
+    {
+      "name": "BG01A~ipad",
+      "file": "backgrounds/8b24b057c703bbbd5a1c.jpg"
+    },
+    {
+      "name": "BG02NS1~ipad",
+      "file": "backgrounds/7a3df671f70dac954380.jpg"
+    },
+    {
+      "name": "BG03A5~ipad",
+      "file": "backgrounds/a2f7cd0d830bafc0f569.jpg"
+    },
+    {
+      "name": "BG05A2~ipad",
+      "file": "backgrounds/3f0c9b03e7dbae9b8b65.jpg"
+    },
+    {
+      "name": "BG10A1D~ipad",
+      "file": "backgrounds/e56561f4446b1d08bc01.jpg"
+    },
+    {
+      "name": "BG15A~ipad",
+      "file": "backgrounds/b008d0dcd27385f523ad.jpg"
+    },
+    {
+      "name": "BG18A3~ipad",
+      "file": "backgrounds/1d725934f613432a300a.jpg"
+    },
+    {
+      "name": "BG24E0~ipad",
+      "file": "backgrounds/c43a01360de2ca568893.jpg"
+    }
+  ],
+  "models": [
+    {
+      "name": "常服",
+      "file": "models/kurisu-authored-v9/common/layout.model3.json",
+      "tracking": "eyes"
+    },
+    {
+      "name": "实验服",
+      "file": "models/kurisu-authored-v9/lab/layout.model3.json",
+      "tracking": "eyes"
+    },
+    {
+      "name": "女仆",
+      "file": "models/kurisu-authored-v9/maid/layout.model3.json",
+      "tracking": "eyes"
+    },
+    {
+      "name": "泳装",
+      "file": "models/kurisu-authored-v9/swim/layout.model3.json",
+      "tracking": "eyes"
+    },
+    {
+      "name": "浴衣",
+      "file": "models/kurisu-authored-v9/yukata/layout.model3.json",
+      "tracking": "eyes"
+    }
+  ],
+  "defaults": {
+    "track": "music/a802310fbdf6c0929cca.ogg",
+    "background": "",
+    "selected_model": "",
+    "framing": "normal",
+    "enabled": true,
+    "volume": 12,
+    "ringtone": "ringtones/bgm13.mp3"
+  },
+  "files": [
+    {
+      "path": "backgrounds/1d725934f613432a300a.jpg",
+      "size": 194645,
+      "sha256": "1d725934f613432a300a03daa5745e980a5606b55b2eb2ef770543fa41157dd1"
+    },
+    {
+      "path": "backgrounds/3f0c9b03e7dbae9b8b65.jpg",
+      "size": 176648,
+      "sha256": "3f0c9b03e7dbae9b8b65f65576bfa0878265bb1296e13cf5244194d80c9f0147"
+    },
+    {
+      "path": "backgrounds/7a3df671f70dac954380.jpg",
+      "size": 101088,
+      "sha256": "7a3df671f70dac954380cb1db8e2a73373ac137ef0d67c64cec386ecdd03655a"
+    },
+    {
+      "path": "backgrounds/8b24b057c703bbbd5a1c.jpg",
+      "size": 148655,
+      "sha256": "8b24b057c703bbbd5a1cb79a9accde573893ffa18354054f75d240715ddb382f"
+    },
+    {
+      "path": "backgrounds/a2f7cd0d830bafc0f569.jpg",
+      "size": 151593,
+      "sha256": "a2f7cd0d830bafc0f569aefa5c3cf78d96f427df49b8449dde766f7d003f7266"
+    },
+    {
+      "path": "backgrounds/b008d0dcd27385f523ad.jpg",
+      "size": 205942,
+      "sha256": "b008d0dcd27385f523ade4f6b0b8bf82e4e9d8872413bde696c07ac3da24881e"
+    },
+    {
+      "path": "backgrounds/c43a01360de2ca568893.jpg",
+      "size": 153776,
+      "sha256": "c43a01360de2ca568893515f7a0b0dd4d582c40d5b795013a5f2ed3c9c559922"
+    },
+    {
+      "path": "backgrounds/e56561f4446b1d08bc01.jpg",
+      "size": 217278,
+      "sha256": "e56561f4446b1d08bc01495c495419ec00760e4830dd16da18596176bb4be44e"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/authored.angry.exp3.json",
+      "size": 1807,
+      "sha256": "7a103d3f783e8e724e6e1108f55d82e64dbb5b976d3f2d45f30420085748c929"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/authored.annoyed.exp3.json",
+      "size": 1813,
+      "sha256": "2a6d527845852cf480c556c189f793f6b01192578cb8b65bf6ae97f68bb4fa07"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/authored.curious.exp3.json",
+      "size": 1792,
+      "sha256": "821a8868cb374418d0be83a53835d0c4e6a448ceeaba3845331a3c95a710cd5b"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/authored.focused.exp3.json",
+      "size": 1803,
+      "sha256": "eeb3cfdbc079c56918ff87c70177d9cd81c9447f084c46824d44a3b2d3fab45b"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/authored.happy.exp3.json",
+      "size": 1791,
+      "sha256": "12bde9e7bbc00ea86f7ba4d387b1a96d0e16a838e4c86474361d64cada8b86c3"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/authored.natural.exp3.json",
+      "size": 1775,
+      "sha256": "2ec79f3a5fe67dcbfffee669a3781e98f8b0581a5485d48d6911ab9e9d8c42f8"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/authored.shy.exp3.json",
+      "size": 1802,
+      "sha256": "0bfd8558a4a5287ea7f9abdca1126a8f7a2251c353c1acf80797ea40a5b68015"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/authored.sleepy.exp3.json",
+      "size": 1786,
+      "sha256": "80867352ac5133c17f20d5f2615c9ea6f92c69e757d864bf8e2ad6f73bcbd60d"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/authored.smile.exp3.json",
+      "size": 1790,
+      "sha256": "79b35b481000a5fba306d34a2e1e2dac972c05adc0f90d28e6dc5f14efbf7294"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/authored.surprised.exp3.json",
+      "size": 1789,
+      "sha256": "aa31b98fabc74c284dabc0f0a856eef9974ea1d40741b3a34da8d05b4b87a7a0"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/authored.wink.exp3.json",
+      "size": 1782,
+      "sha256": "7a859044b3f773568e5b4b8c605bab15eb48d74e708e11ded1c3b96d91f43932"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/authored.worried.exp3.json",
+      "size": 1802,
+      "sha256": "d1a68d9b5bc03b807ef58e30fa7b2b9b8807d24cf79374f082af370b6c1a16f5"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/layout.4096/texture_00.png",
+      "size": 1438317,
+      "sha256": "2c88b6e9fdb53cdbed2ba75eca23247ac6b4f654ef6edc4af3dd2c526e241413"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/layout.blink.motion3.json",
+      "size": 1645,
+      "sha256": "8890415339437c67352e1a93cbeb3f95b9096bbe3a4bf3c245bcd012bc77c731"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/layout.cdi3.json",
+      "size": 8599,
+      "sha256": "cd7702a52aae048163a880a1f44a9f64463bc0a1ce6b3ace25c6ba0890c3a7b5"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/layout.idle.motion3.json",
+      "size": 29105,
+      "sha256": "0e99254dbcb2bc953b8b185ba414d65dca5fddcba22dbaab7fa35bc6217a4b38"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/layout.moc3",
+      "size": 984256,
+      "sha256": "939265bfea08e89954907b88ba5197e586dde6df590209c941ed0365092473d0"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/layout.model3.json",
+      "size": 3368,
+      "sha256": "f1c728c00890ed7f6ad76b1ac0a1763020c84bccacb6cead1ae2c0fb40f1f583"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/layout.nod.motion3.json",
+      "size": 8232,
+      "sha256": "19c5ed84b63e7b7aed12a4f29bad433f18912008c2c5bedb59ee21a7f7ec13d1"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/layout.physics3.json",
+      "size": 32255,
+      "sha256": "1416793e0cf0bef2dd9e4e8a10e7359590525df1f82ede6d9542cc5160ce33e7"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/layout.shake.motion3.json",
+      "size": 6403,
+      "sha256": "e61b2ad02d32e2ce6be885df4b254423fdc515a16d62f31224205c8e2627d787"
+    },
+    {
+      "path": "models/kurisu-authored-v9/common/layout.talk.motion3.json",
+      "size": 11867,
+      "sha256": "3cbb015f46c0e05cb934305d99dcabd4c654e3df6818716790ccd36bc62d7681"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/authored.angry.exp3.json",
+      "size": 1807,
+      "sha256": "7a103d3f783e8e724e6e1108f55d82e64dbb5b976d3f2d45f30420085748c929"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/authored.annoyed.exp3.json",
+      "size": 1813,
+      "sha256": "2a6d527845852cf480c556c189f793f6b01192578cb8b65bf6ae97f68bb4fa07"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/authored.curious.exp3.json",
+      "size": 1792,
+      "sha256": "821a8868cb374418d0be83a53835d0c4e6a448ceeaba3845331a3c95a710cd5b"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/authored.focused.exp3.json",
+      "size": 1803,
+      "sha256": "eeb3cfdbc079c56918ff87c70177d9cd81c9447f084c46824d44a3b2d3fab45b"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/authored.happy.exp3.json",
+      "size": 1791,
+      "sha256": "12bde9e7bbc00ea86f7ba4d387b1a96d0e16a838e4c86474361d64cada8b86c3"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/authored.natural.exp3.json",
+      "size": 1775,
+      "sha256": "2ec79f3a5fe67dcbfffee669a3781e98f8b0581a5485d48d6911ab9e9d8c42f8"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/authored.shy.exp3.json",
+      "size": 1802,
+      "sha256": "0bfd8558a4a5287ea7f9abdca1126a8f7a2251c353c1acf80797ea40a5b68015"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/authored.sleepy.exp3.json",
+      "size": 1786,
+      "sha256": "80867352ac5133c17f20d5f2615c9ea6f92c69e757d864bf8e2ad6f73bcbd60d"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/authored.smile.exp3.json",
+      "size": 1790,
+      "sha256": "79b35b481000a5fba306d34a2e1e2dac972c05adc0f90d28e6dc5f14efbf7294"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/authored.surprised.exp3.json",
+      "size": 1789,
+      "sha256": "aa31b98fabc74c284dabc0f0a856eef9974ea1d40741b3a34da8d05b4b87a7a0"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/authored.wink.exp3.json",
+      "size": 1782,
+      "sha256": "7a859044b3f773568e5b4b8c605bab15eb48d74e708e11ded1c3b96d91f43932"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/authored.worried.exp3.json",
+      "size": 1802,
+      "sha256": "d1a68d9b5bc03b807ef58e30fa7b2b9b8807d24cf79374f082af370b6c1a16f5"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/layout.4096/texture_00.png",
+      "size": 1100108,
+      "sha256": "b10a6619494a235136f4fc8685f3efad44adad725cef79c7830f54fa1365df5d"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/layout.blink.motion3.json",
+      "size": 1645,
+      "sha256": "8890415339437c67352e1a93cbeb3f95b9096bbe3a4bf3c245bcd012bc77c731"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/layout.cdi3.json",
+      "size": 8713,
+      "sha256": "30643f254445b16afd37acfd67f5d2aa0886f4d14d467afe2edbca7496b40d73"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/layout.idle.motion3.json",
+      "size": 29105,
+      "sha256": "0e99254dbcb2bc953b8b185ba414d65dca5fddcba22dbaab7fa35bc6217a4b38"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/layout.moc3",
+      "size": 977984,
+      "sha256": "bda2eb26eb67cb052b29382b9a0c393f6ee753eee8cb9ed6ec6e16f5f4b3bf6a"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/layout.model3.json",
+      "size": 3368,
+      "sha256": "7013ff90bf9f1989e2485535bca853a4ee955dabe0cbef4ee6e327306b3a8754"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/layout.nod.motion3.json",
+      "size": 8232,
+      "sha256": "19c5ed84b63e7b7aed12a4f29bad433f18912008c2c5bedb59ee21a7f7ec13d1"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/layout.physics3.json",
+      "size": 32255,
+      "sha256": "1416793e0cf0bef2dd9e4e8a10e7359590525df1f82ede6d9542cc5160ce33e7"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/layout.shake.motion3.json",
+      "size": 6403,
+      "sha256": "e61b2ad02d32e2ce6be885df4b254423fdc515a16d62f31224205c8e2627d787"
+    },
+    {
+      "path": "models/kurisu-authored-v9/lab/layout.talk.motion3.json",
+      "size": 11867,
+      "sha256": "3cbb015f46c0e05cb934305d99dcabd4c654e3df6818716790ccd36bc62d7681"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/authored.angry.exp3.json",
+      "size": 1807,
+      "sha256": "7a103d3f783e8e724e6e1108f55d82e64dbb5b976d3f2d45f30420085748c929"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/authored.annoyed.exp3.json",
+      "size": 1813,
+      "sha256": "2a6d527845852cf480c556c189f793f6b01192578cb8b65bf6ae97f68bb4fa07"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/authored.curious.exp3.json",
+      "size": 1792,
+      "sha256": "821a8868cb374418d0be83a53835d0c4e6a448ceeaba3845331a3c95a710cd5b"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/authored.focused.exp3.json",
+      "size": 1803,
+      "sha256": "eeb3cfdbc079c56918ff87c70177d9cd81c9447f084c46824d44a3b2d3fab45b"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/authored.happy.exp3.json",
+      "size": 1791,
+      "sha256": "12bde9e7bbc00ea86f7ba4d387b1a96d0e16a838e4c86474361d64cada8b86c3"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/authored.natural.exp3.json",
+      "size": 1775,
+      "sha256": "2ec79f3a5fe67dcbfffee669a3781e98f8b0581a5485d48d6911ab9e9d8c42f8"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/authored.shy.exp3.json",
+      "size": 1802,
+      "sha256": "0bfd8558a4a5287ea7f9abdca1126a8f7a2251c353c1acf80797ea40a5b68015"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/authored.sleepy.exp3.json",
+      "size": 1786,
+      "sha256": "80867352ac5133c17f20d5f2615c9ea6f92c69e757d864bf8e2ad6f73bcbd60d"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/authored.smile.exp3.json",
+      "size": 1790,
+      "sha256": "79b35b481000a5fba306d34a2e1e2dac972c05adc0f90d28e6dc5f14efbf7294"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/authored.surprised.exp3.json",
+      "size": 1789,
+      "sha256": "aa31b98fabc74c284dabc0f0a856eef9974ea1d40741b3a34da8d05b4b87a7a0"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/authored.wink.exp3.json",
+      "size": 1782,
+      "sha256": "7a859044b3f773568e5b4b8c605bab15eb48d74e708e11ded1c3b96d91f43932"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/authored.worried.exp3.json",
+      "size": 1802,
+      "sha256": "d1a68d9b5bc03b807ef58e30fa7b2b9b8807d24cf79374f082af370b6c1a16f5"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/layout.4096/texture_00.png",
+      "size": 1103388,
+      "sha256": "ff50a70e03333fe61e6dc83c73fc56e4a153b4bbfb3f4950ef277003fcb9f7c7"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/layout.blink.motion3.json",
+      "size": 1645,
+      "sha256": "8890415339437c67352e1a93cbeb3f95b9096bbe3a4bf3c245bcd012bc77c731"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/layout.cdi3.json",
+      "size": 8642,
+      "sha256": "b2d073cd3630c903c64e3707bf9be832fc6595cba60de9b6a24bba55881b3d34"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/layout.idle.motion3.json",
+      "size": 29105,
+      "sha256": "0e99254dbcb2bc953b8b185ba414d65dca5fddcba22dbaab7fa35bc6217a4b38"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/layout.moc3",
+      "size": 951232,
+      "sha256": "c14e24eb3e3282da4a1ce9c8762376554868ac5aecab53ea5add6e5943006b56"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/layout.model3.json",
+      "size": 3368,
+      "sha256": "a76d63f4c513df96795890ef2e4c92b6162adb2f38abbe8bfdec80c33ef5fb8b"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/layout.nod.motion3.json",
+      "size": 8232,
+      "sha256": "19c5ed84b63e7b7aed12a4f29bad433f18912008c2c5bedb59ee21a7f7ec13d1"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/layout.physics3.json",
+      "size": 32255,
+      "sha256": "1416793e0cf0bef2dd9e4e8a10e7359590525df1f82ede6d9542cc5160ce33e7"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/layout.shake.motion3.json",
+      "size": 6403,
+      "sha256": "e61b2ad02d32e2ce6be885df4b254423fdc515a16d62f31224205c8e2627d787"
+    },
+    {
+      "path": "models/kurisu-authored-v9/maid/layout.talk.motion3.json",
+      "size": 11867,
+      "sha256": "3cbb015f46c0e05cb934305d99dcabd4c654e3df6818716790ccd36bc62d7681"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/authored.angry.exp3.json",
+      "size": 1807,
+      "sha256": "7a103d3f783e8e724e6e1108f55d82e64dbb5b976d3f2d45f30420085748c929"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/authored.annoyed.exp3.json",
+      "size": 1813,
+      "sha256": "2a6d527845852cf480c556c189f793f6b01192578cb8b65bf6ae97f68bb4fa07"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/authored.curious.exp3.json",
+      "size": 1792,
+      "sha256": "821a8868cb374418d0be83a53835d0c4e6a448ceeaba3845331a3c95a710cd5b"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/authored.focused.exp3.json",
+      "size": 1803,
+      "sha256": "eeb3cfdbc079c56918ff87c70177d9cd81c9447f084c46824d44a3b2d3fab45b"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/authored.happy.exp3.json",
+      "size": 1791,
+      "sha256": "12bde9e7bbc00ea86f7ba4d387b1a96d0e16a838e4c86474361d64cada8b86c3"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/authored.natural.exp3.json",
+      "size": 1775,
+      "sha256": "2ec79f3a5fe67dcbfffee669a3781e98f8b0581a5485d48d6911ab9e9d8c42f8"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/authored.shy.exp3.json",
+      "size": 1802,
+      "sha256": "0bfd8558a4a5287ea7f9abdca1126a8f7a2251c353c1acf80797ea40a5b68015"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/authored.sleepy.exp3.json",
+      "size": 1786,
+      "sha256": "80867352ac5133c17f20d5f2615c9ea6f92c69e757d864bf8e2ad6f73bcbd60d"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/authored.smile.exp3.json",
+      "size": 1790,
+      "sha256": "79b35b481000a5fba306d34a2e1e2dac972c05adc0f90d28e6dc5f14efbf7294"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/authored.surprised.exp3.json",
+      "size": 1789,
+      "sha256": "aa31b98fabc74c284dabc0f0a856eef9974ea1d40741b3a34da8d05b4b87a7a0"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/authored.wink.exp3.json",
+      "size": 1782,
+      "sha256": "7a859044b3f773568e5b4b8c605bab15eb48d74e708e11ded1c3b96d91f43932"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/authored.worried.exp3.json",
+      "size": 1802,
+      "sha256": "d1a68d9b5bc03b807ef58e30fa7b2b9b8807d24cf79374f082af370b6c1a16f5"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/layout.4096/texture_00.png",
+      "size": 1009511,
+      "sha256": "7dd33d6e7864098eb0766c10e13b5b74415f79932fb6cf9c50c27b9650ba409d"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/layout.blink.motion3.json",
+      "size": 1645,
+      "sha256": "8890415339437c67352e1a93cbeb3f95b9096bbe3a4bf3c245bcd012bc77c731"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/layout.cdi3.json",
+      "size": 8764,
+      "sha256": "c27ea0de20bd7ae4f869007e2f2e4fc4220304f2c741b1804c743c56d9b39568"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/layout.idle.motion3.json",
+      "size": 29105,
+      "sha256": "0e99254dbcb2bc953b8b185ba414d65dca5fddcba22dbaab7fa35bc6217a4b38"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/layout.moc3",
+      "size": 1006976,
+      "sha256": "1a180685b4ef2704f1f53ee3a13bcf01038660e4918384de926dd079897b5327"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/layout.model3.json",
+      "size": 3367,
+      "sha256": "88fe325755fc212008aab68da2ce541dbc51e41742c38477f18c8648367b5249"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/layout.nod.motion3.json",
+      "size": 8232,
+      "sha256": "19c5ed84b63e7b7aed12a4f29bad433f18912008c2c5bedb59ee21a7f7ec13d1"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/layout.physics3.json",
+      "size": 32255,
+      "sha256": "1416793e0cf0bef2dd9e4e8a10e7359590525df1f82ede6d9542cc5160ce33e7"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/layout.shake.motion3.json",
+      "size": 6403,
+      "sha256": "e61b2ad02d32e2ce6be885df4b254423fdc515a16d62f31224205c8e2627d787"
+    },
+    {
+      "path": "models/kurisu-authored-v9/swim/layout.talk.motion3.json",
+      "size": 11867,
+      "sha256": "3cbb015f46c0e05cb934305d99dcabd4c654e3df6818716790ccd36bc62d7681"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/authored.angry.exp3.json",
+      "size": 1807,
+      "sha256": "7a103d3f783e8e724e6e1108f55d82e64dbb5b976d3f2d45f30420085748c929"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/authored.annoyed.exp3.json",
+      "size": 1813,
+      "sha256": "2a6d527845852cf480c556c189f793f6b01192578cb8b65bf6ae97f68bb4fa07"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/authored.curious.exp3.json",
+      "size": 1792,
+      "sha256": "821a8868cb374418d0be83a53835d0c4e6a448ceeaba3845331a3c95a710cd5b"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/authored.focused.exp3.json",
+      "size": 1803,
+      "sha256": "eeb3cfdbc079c56918ff87c70177d9cd81c9447f084c46824d44a3b2d3fab45b"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/authored.happy.exp3.json",
+      "size": 1791,
+      "sha256": "12bde9e7bbc00ea86f7ba4d387b1a96d0e16a838e4c86474361d64cada8b86c3"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/authored.natural.exp3.json",
+      "size": 1775,
+      "sha256": "2ec79f3a5fe67dcbfffee669a3781e98f8b0581a5485d48d6911ab9e9d8c42f8"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/authored.shy.exp3.json",
+      "size": 1802,
+      "sha256": "0bfd8558a4a5287ea7f9abdca1126a8f7a2251c353c1acf80797ea40a5b68015"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/authored.sleepy.exp3.json",
+      "size": 1786,
+      "sha256": "80867352ac5133c17f20d5f2615c9ea6f92c69e757d864bf8e2ad6f73bcbd60d"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/authored.smile.exp3.json",
+      "size": 1790,
+      "sha256": "79b35b481000a5fba306d34a2e1e2dac972c05adc0f90d28e6dc5f14efbf7294"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/authored.surprised.exp3.json",
+      "size": 1789,
+      "sha256": "aa31b98fabc74c284dabc0f0a856eef9974ea1d40741b3a34da8d05b4b87a7a0"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/authored.wink.exp3.json",
+      "size": 1782,
+      "sha256": "7a859044b3f773568e5b4b8c605bab15eb48d74e708e11ded1c3b96d91f43932"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/authored.worried.exp3.json",
+      "size": 1802,
+      "sha256": "d1a68d9b5bc03b807ef58e30fa7b2b9b8807d24cf79374f082af370b6c1a16f5"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/layout.4096/texture_00.png",
+      "size": 1189725,
+      "sha256": "0e0be53963a14f9440b05b079d5820fe35aedda9118a73477cfacf5a39046ca9"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/layout.blink.motion3.json",
+      "size": 1645,
+      "sha256": "8890415339437c67352e1a93cbeb3f95b9096bbe3a4bf3c245bcd012bc77c731"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/layout.cdi3.json",
+      "size": 8711,
+      "sha256": "c462003f99d8c9c3ec519a31b4cc7cf7629a43e60a32e8630af4f5678025ba5f"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/layout.idle.motion3.json",
+      "size": 29105,
+      "sha256": "0e99254dbcb2bc953b8b185ba414d65dca5fddcba22dbaab7fa35bc6217a4b38"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/layout.moc3",
+      "size": 986496,
+      "sha256": "b1100531fbe3f8d9d0c960d04bbefdf7170c3bee620c75ba974f416d8c6ede51"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/layout.model3.json",
+      "size": 3368,
+      "sha256": "5bf209da668af1814f6665e45dab7f1927080491c1713ee800ff8de4805fc308"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/layout.nod.motion3.json",
+      "size": 8232,
+      "sha256": "19c5ed84b63e7b7aed12a4f29bad433f18912008c2c5bedb59ee21a7f7ec13d1"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/layout.physics3.json",
+      "size": 32255,
+      "sha256": "1416793e0cf0bef2dd9e4e8a10e7359590525df1f82ede6d9542cc5160ce33e7"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/layout.shake.motion3.json",
+      "size": 6403,
+      "sha256": "e61b2ad02d32e2ce6be885df4b254423fdc515a16d62f31224205c8e2627d787"
+    },
+    {
+      "path": "models/kurisu-authored-v9/yukata/layout.talk.motion3.json",
+      "size": 11867,
+      "sha256": "3cbb015f46c0e05cb934305d99dcabd4c654e3df6818716790ccd36bc62d7681"
+    },
+    {
+      "path": "music/00576458137f8cf94a05.ogg",
+      "size": 742820,
+      "sha256": "00576458137f8cf94a057f36f8aa89a84159ae5265e6672c3640daeb2cf5097f"
+    },
+    {
+      "path": "music/031a4484f83ae300c855.ogg",
+      "size": 1237860,
+      "sha256": "031a4484f83ae300c8556fc075be97eda8c5ae7ff017e2afa04be5394a1926dc"
+    },
+    {
+      "path": "music/0a922182cd9ab976c890.ogg",
+      "size": 1020892,
+      "sha256": "0a922182cd9ab976c89066a1f44e27590396ed4f9150d34a631a443e2f956f2c"
+    },
+    {
+      "path": "music/196d72ba70955d48481b.ogg",
+      "size": 1167069,
+      "sha256": "196d72ba70955d48481b462a4608be3ee47354fc79bfc7b99797490d3668aca9"
+    },
+    {
+      "path": "music/1ace8ce0c6e1e01ef08a.ogg",
+      "size": 833526,
+      "sha256": "1ace8ce0c6e1e01ef08aa6254f14bacab547a6db66468ce2097e3cae0b201689"
+    },
+    {
+      "path": "music/253022088b0dcaf23f9d.ogg",
+      "size": 1082129,
+      "sha256": "253022088b0dcaf23f9d77ef5a96b6c0ed39f9927d279f75cecce6b2cdc74386"
+    },
+    {
+      "path": "music/8d884efb45d4a8ffc7ec.ogg",
+      "size": 1200634,
+      "sha256": "8d884efb45d4a8ffc7eced70ef987cd9d9c553da11bd0de7faf3e4e043908727"
+    },
+    {
+      "path": "music/a802310fbdf6c0929cca.ogg",
+      "size": 866618,
+      "sha256": "a802310fbdf6c0929cca12b07eb93bf4afdaff2d8bc55f98141b4e1f25554e0c"
+    },
+    {
+      "path": "music/a96a24f45fe36aadf71a.ogg",
+      "size": 849740,
+      "sha256": "a96a24f45fe36aadf71aa4cbdc8092b81f9b1ecef3a65e82d71105c1a6c72d9d"
+    },
+    {
+      "path": "music/af891714281b2eea4b54.ogg",
+      "size": 1389345,
+      "sha256": "af891714281b2eea4b541d706edfd983a4124cae2b02aeb9e83cd43cb10bf0d5"
+    },
+    {
+      "path": "music/c40f5a0a5cb3267cb3ce.ogg",
+      "size": 1145103,
+      "sha256": "c40f5a0a5cb3267cb3ce112d7eb0a6c47a92421c0c0dc772d9756d5bee4fe2dd"
+    },
+    {
+      "path": "music/c991bb08b08267aacf55.ogg",
+      "size": 1209936,
+      "sha256": "c991bb08b08267aacf55546d9ebf50a39c6af600a49b3be6b5bb0e53096133e7"
+    },
+    {
+      "path": "music/d482fe553159a73f6467.ogg",
+      "size": 941675,
+      "sha256": "d482fe553159a73f6467cdc08cfa43d4536497cf224388db55c80e3c270d8cef"
+    },
+    {
+      "path": "music/ed140fec8bc7bf943fe8.ogg",
+      "size": 1106463,
+      "sha256": "ed140fec8bc7bf943fe88654bfbe4f7f1008bcd93cad4bb0ebc9bc35701cee9d"
+    },
+    {
+      "path": "ringtones/bgm13.mp3",
+      "size": 2674563,
+      "sha256": "55dbac5727c472e5a84cacebc6195d3565bdb04af591a59492ff3c83909fb5f1"
+    }
+  ]
+}

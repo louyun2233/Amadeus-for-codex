@@ -1,0 +1,2 @@
+# Catalog SHA-256 hashes describe exact bytes on every checkout platform.
+assets/media/** -text whitespace=cr-at-eol
