@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { fetchLoopback } from '../shared/loopback-http.mjs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 
@@ -9,7 +10,7 @@ let startup = null
 
 async function ready() {
   try {
-    const response = await fetch(READY_URL, { signal: AbortSignal.timeout(2000) })
+    const response = await fetchLoopback(READY_URL, { signal: AbortSignal.timeout(2000) })
     if (!response.ok) return false
     const body = await response.json()
     return Array.isArray(body?.data)

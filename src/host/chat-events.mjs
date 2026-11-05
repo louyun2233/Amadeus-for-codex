@@ -1,5 +1,6 @@
 import { EMOTION_EXPR } from '../core/emotion.mjs'
 import { splitLocalSpeech } from '../core/parse.mjs'
+import { redactText } from '../core/redact.mjs'
 
 /** Connect a conversation engine to the panel event stream. */
 export function wireChatEvents({ chat, hub, config, memory, log }) {
@@ -11,14 +12,11 @@ export function wireChatEvents({ chat, hub, config, memory, log }) {
     hub.broadcast(event, payload)
   }
 
-  chat.on('turn:delta', (evt) => {
-    sendToOrigin(evt.origin, 'chunk', { turnId: evt.turnId, delta: evt.delta })
-  })
   chat.on('turn:status', (evt) => {
     sendToOrigin(evt.origin, 'turn:status', { turnId: evt.turnId, phase: evt.phase })
   })
   chat.on('turn:error', (evt) => {
-    sendToOrigin(evt.origin, 'turn:error', evt)
+    sendToOrigin(evt.origin, 'turn:error', { ...evt, error: redactText(evt.error) })
     log?.warn?.('[chat] turn failed:', evt.error)
   })
   chat.on('turn:done', (evt) => {

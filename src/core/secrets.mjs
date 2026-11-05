@@ -17,7 +17,6 @@ import { log } from '../shared/log.mjs'
 const KNOWN = new Set([
   'chatApiKey',
   'ttsApiKey',
-  'sttApiKey',
   'openaiBaseUrl',
 ])
 

@@ -70,11 +70,9 @@ test('every default config key is settable (no dead config)', () => {
 })
 
 test('every panel write path exists in the config whitelist', () => {
-  const views = read('src/panel/views.js')
-  const paths = new Set(
-    [...views.matchAll(/patch\(\{\s*([a-zA-Z]+):\s*\{\s*([a-zA-Z]+):/g)].map((m) => `${m[1]}.${m[2]}`),
-  )
-  assert.ok(paths.size >= 8, 'expected the settings page to patch several keys')
+  const views = read('native/panel.py')
+  const paths = new Set([...views.matchAll(/self\.patch\(\{["']([a-zA-Z]+)["']:\s*\{["']([a-zA-Z]+)["']:/g)].map(m => `${m[1]}.${m[2]}`))
+  assert.ok(paths.size >= 8, 'expected native settings to patch several keys')
   const bad = [...paths].filter((k) => !schemaKeys.has(k)).sort()
   assert.deepEqual(bad, [], `the panel would get these rejected: ${bad.join(', ')}`)
 })
@@ -111,18 +109,14 @@ const routePaths = new Set(
 
 test('every panel API path maps to a daemon route', () => {
   const panelPaths = new Set()
-  for (const file of walk('src/panel')) {
-    for (const m of read(file).matchAll(/['"`](\/amadeus\/[A-Za-z0-9/_${}.:-]*)['"`]/g)) {
-      panelPaths.add(m[1])
-    }
-  }
+  for (const m of read('native/panel.py').matchAll(/["'](\/amadeus\/[A-Za-z0-9/{}_.:-]*)[?"']/g)) panelPaths.add(m[1])
   assert.ok(panelPaths.size > 8, 'expected the panel to call several endpoints')
   const orphan = [...panelPaths]
     .filter((p) => {
       const clean = p.split('?')[0]
       if (clean === '/amadeus/events') return false // SSE, handled inline
       if (clean.endsWith('/')) return false // dynamic session prefix
-      if (/^\/amadeus\/(panel|assets)\//.test(clean)) return false // static
+      if (/^\/amadeus\/sessions\/\{self.session_id\}\/messages$/.test(clean)) return false // dynamic history
       return !routePaths.has(clean)
     })
     .sort()
@@ -147,11 +141,9 @@ test('SSE event names are identical on both sides', () => {
     }
   }
 
-  const transport = read('src/panel/transport.js')
-  const block = transport.match(/const EVENTS = \[([\s\S]*?)\]/)
-  assert.ok(block, 'transport.js must declare the event list')
-  const listened = new Set([...block[1].matchAll(/'([^']+)'/g)].map((m) => m[1]))
-
+  const eventBlock = read('native/panel.py').split('    def _on_event(self, kind, data):')[1].split('    def _utterance')[0]
+  const conditionBlocks = [...eventBlock.matchAll(/(?:if|elif) kind (?:== "[^"\n]+"|in \([^\n]+\))/g)].map(m => m[0]).join('\n')
+  const listened = new Set([...conditionBlocks.matchAll(/"([a-z]+(?::[a-z]+)?(?:-[a-z]+)?)"/g)].map(m => m[1]).filter(name => !['offline', 'connected'].includes(name)))
   assert.deepEqual(
     [...listened].filter((e) => !emitted.has(e)).sort(),
     [],
@@ -164,7 +156,7 @@ test('SSE event names are identical on both sides', () => {
   )
 })
 
-test('emotion names agree across core, registry and the placeholder', () => {
+test('registry expression names are recognized by the emotion core', () => {
   const emotions = new Set(
     [...read('src/core/emotion.mjs').matchAll(/^\s*'([a-z_]+)',?$/gm)].map((m) => m[1]),
   )
@@ -173,12 +165,7 @@ test('emotion names agree across core, registry and the placeholder', () => {
   const registry = JSON.parse(read('config/assets.registry.json'))
   const pack = registry.packs.find((p) => p.kind === 'model')
   const mapped = new Set(Object.values(pack.expressionMap).flat())
-  const tinted = new Set(
-    [...read('src/panel/placeholder.js').matchAll(/^\s*([a-z_]+):\s*'#/gm)].map((m) => m[1]),
-  )
-
   assert.deepEqual([...mapped].filter((e) => !emotions.has(e)).sort(), [], 'registry maps unknown emotions')
-  assert.deepEqual([...tinted].filter((e) => !emotions.has(e)).sort(), [], 'placeholder tints unknown emotions')
 })
 
 test('every secret name used is a known secret', () => {
@@ -211,12 +198,9 @@ test('memory namespaces used are declared', () => {
   assert.deepEqual(unknown, [], `unknown memory namespaces: ${unknown.join(', ')}`)
 })
 
-test('the TTS word-timing header name matches on both sides', () => {
-  assert.ok(daemonSource.includes("'X-Amadeus-Words'"), 'daemon must set the header')
-  assert.ok(
-    read('src/panel/audio-queue.js').includes("get('X-Amadeus-Words')"),
-    'panel must read the same header',
-  )
+test('private TTS responses are not shared-cacheable', () => {
+  assert.ok(daemonSource.includes("'Cache-Control': 'no-store'"))
+  assert.ok(!daemonSource.includes('X-Amadeus-Words'))
 })
 
 test('every CLI command is documented in its own help text', () => {

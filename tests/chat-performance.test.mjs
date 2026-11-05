@@ -39,8 +39,8 @@ test('companion Codex calls override reasoning for one run without changing the 
     '-m', 'custom', '-',
   ])
   assert.equal(CHAT_TIMEOUT_MS, 60000)
-  const panel = fs.readFileSync(new URL('../src/panel/main.js', import.meta.url), 'utf8')
-  const panelTimeout = Number(panel.match(/const TURN_TIMEOUT_MS = (\d+)/)?.[1])
+  const panel = fs.readFileSync(new URL('../native/panel.py', import.meta.url), 'utf8')
+  const panelTimeout = Number(panel.match(/time\.monotonic\(\) - self\.turn_started_at >= (\d+)/)?.[1]) * 1000
   assert.ok(panelTimeout > CHAT_TIMEOUT_MS, 'the panel must wait for the backend error event')
   assert.ok(panelTimeout <= CHAT_TIMEOUT_MS + 30000, 'the panel must still have a bounded wait')
 })
@@ -56,6 +56,7 @@ test('Codex stages describe transport progress without exposing reasoning events
       getConfig: () => ({ chat: { model: '' } }),
       resolveExecutable: async () => 'codex-test',
       childEnv: async () => ({}),
+      discoverMcp: async () => [],
       spawnProcess: (_cmd, args) => {
         argv = args
         const child = fakeChild()
@@ -86,6 +87,7 @@ test('a silent Codex child fails within its own deadline', async () => {
       getConfig: () => ({ chat: {} }),
       resolveExecutable: async () => 'codex-test',
       childEnv: async () => ({}),
+      discoverMcp: async () => [],
       spawnProcess: () => fakeChild(),
     })
     await assert.rejects(
@@ -106,6 +108,7 @@ test('a timed-out sampling retry is reported as upstream connectivity, not think
       getConfig: () => ({ chat: {} }),
       resolveExecutable: async () => 'codex-test',
       childEnv: async () => ({}),
+      discoverMcp: async () => [],
       spawnProcess: () => {
         const child = fakeChild()
         setImmediate(() => child.stderr.write('WARN codex_core::responses_retry: sampling_error=request timed out'))

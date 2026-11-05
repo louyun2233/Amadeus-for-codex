@@ -8,6 +8,7 @@ import json
 import math
 import mimetypes
 import os
+import re
 import random
 import sys
 import tempfile
@@ -110,20 +111,32 @@ def scale_wav_pcm16(data, volume):
     return data[:start] + samples.tobytes() + data[start + len(samples) * 2:]
 
 
+class NoDaemonRedirect(urllib.request.HTTPRedirectHandler):
+    def redirect_request(self, req, fp, code, msg, headers, newurl):
+        raise urllib.error.HTTPError(req.full_url, code, 'Daemon redirects are disabled', headers, fp)
+
+
 class Api:
     def __init__(self, url):
         parsed = urllib.parse.urlparse(url)
-        if parsed.hostname != "127.0.0.1" or parsed.scheme != "http":
+        if parsed.hostname != "127.0.0.1" or parsed.scheme != "http" or parsed.username or parsed.password:
             raise ValueError("Amadeus requires a loopback daemon address")
+        if parsed.port is None or not 1 <= parsed.port <= 65535:
+            raise ValueError("Invalid daemon port")
         token = urllib.parse.parse_qs(parsed.query).get("token", [""])[0]
-        if not token:
+        if not re.fullmatch(r'[A-Za-z0-9_-]{1,256}', token):
             raise ValueError("Missing daemon token")
         self.base = f"http://127.0.0.1:{parsed.port}"
         self.token = token
         self.client = "native-" + uuid.uuid4().hex[:20]
         self.welcome = "welcome=1" in parsed.fragment
+        # The private daemon credential must never go through a system proxy
+        # or follow a redirect to another service.
+        self.opener = urllib.request.build_opener(urllib.request.ProxyHandler({}), NoDaemonRedirect())
 
     def request(self, path, method="GET", payload=None, binary=False, timeout=25):
+        if not isinstance(path, str) or not path.startswith('/amadeus/') or '\\' in path:
+            raise ValueError('Invalid daemon request path')
         body = None if payload is None else json.dumps(payload, ensure_ascii=False).encode("utf-8")
         req = urllib.request.Request(
             self.base + path, data=body, method=method,
@@ -134,7 +147,7 @@ class Api:
             },
         )
         try:
-            with urllib.request.urlopen(req, timeout=timeout) as response:
+            with self.opener.open(req, timeout=timeout) as response:
                 data = response.read()
                 return (data, response.headers.get("Content-Type", "")) if binary else json.loads(data)
         except urllib.error.HTTPError as error:
@@ -599,7 +612,7 @@ class EventReader(threading.Thread):
         while not self.stop.is_set():
             req = urllib.request.Request(url, headers={"Authorization": "Bearer " + self.api.token})
             try:
-                with urllib.request.urlopen(req, timeout=35) as response:
+                with self.api.opener.open(req, timeout=35) as response:
                     self.bridge.event.emit("connected", {})
                     kind, lines = "", []
                     while not self.stop.is_set():
@@ -2580,6 +2593,11 @@ class Panel(QMainWindow):
             if self.tabs.currentIndex() == 1:
                 self.refresh_memory()
             self.call("status", "/amadeus/status")
+        elif kind == "assets:progress":
+            phases = {"start": "准备", "extract": "解包", "done": "已安装", "cached": "使用缓存"}
+            self.status.setText("模型安装：" + phases.get(data.get("phase"), "下载中"))
+        elif kind == "degraded":
+            self.status.setText("语音队列已跳过未完成的播放，可重试")
         elif kind == "cleared":
             self._stop_speech()
             if self.call_item:
@@ -3069,21 +3087,6 @@ def main():
         set_window_identity(int(window.winId()), Path(__file__).resolve().parents[1])
     except OSError as error:
         print(f"Amadeus taskbar identity: {error}", file=sys.stderr)
-    if os.environ.get("AMADEUS_NATIVE_PREVIEW") == "chat":
-        QTimer.singleShot(1000, lambda: window.add_message("user", "你最近在做什么实验"))
-        QTimer.singleShot(1050, lambda: window.add_message("assistant", "还在整理数据。你呢？"))
-    if os.environ.get("AMADEUS_NATIVE_PREVIEW") == "call":
-        def preview_call():
-            window.call_item = {"kind": "call", "id": "preview"}
-            window._set_call_mode(True)
-        QTimer.singleShot(1000, preview_call)
-    if os.environ.get("AMADEUS_NATIVE_PREVIEW") == "settings":
-        QTimer.singleShot(1000, lambda: window.tabs.setCurrentIndex(2))
-    if os.environ.get("AMADEUS_NATIVE_SCREENSHOT"):
-        QTimer.singleShot(int(os.environ.get("AMADEUS_NATIVE_SCREENSHOT_MS", "2000")),
-                          lambda: window.grab().save(os.environ["AMADEUS_NATIVE_SCREENSHOT"]))
-    if os.environ.get("AMADEUS_NATIVE_TEST_MS"):
-        QTimer.singleShot(int(os.environ["AMADEUS_NATIVE_TEST_MS"]), app.quit)
     code = app.exec()
     live2d.dispose()
     return code

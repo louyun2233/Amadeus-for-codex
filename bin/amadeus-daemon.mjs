@@ -80,7 +80,7 @@ const systemTts = new SystemTts()
 // 默认 + 导入：the voice list is the built-in default plus user imports.
 const voices = new VoiceLibrary(paths)
 const tts = new TtsService({ paths, config, secretStore: secrets, voices, systemTts })
-const stt = new SttService({ config, secretStore: secrets })
+const stt = new SttService({ config })
 const llm = createLlmRouter({ paths, getConfig: () => config.get(), secretStore: secrets })
 const hub = new EventHub()
 const assets = new AssetManager({ paths, config, audit, hub })

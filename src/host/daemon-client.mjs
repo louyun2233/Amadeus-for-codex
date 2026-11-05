@@ -4,6 +4,7 @@ import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
 import { AmadeusError, ErrorCode } from '../shared/errors.mjs'
 import { log } from '../shared/log.mjs'
+import { fetchLoopback } from '../shared/loopback-http.mjs'
 
 const HERE = path.dirname(fileURLToPath(import.meta.url))
 const ROOT = path.resolve(HERE, '..', '..')
@@ -38,7 +39,7 @@ export async function ping(info, timeoutMs = 1500) {
   if (!info) return false
   try {
     const ac = AbortSignal.timeout(timeoutMs)
-    const res = await fetch(`http://127.0.0.1:${info.port}/amadeus/health`, {
+    const res = await fetchLoopback(`http://127.0.0.1:${info.port}/amadeus/health`, {
       headers: { Authorization: `Bearer ${info.token}` },
       signal: ac,
     })
@@ -129,7 +130,7 @@ export async function ensureDaemon(paths, { autoStart = true, timeoutMs = 30000 
 export async function callDaemon(paths, method, apiPath, body) {
   const info = await ensureDaemon(paths)
   const url = `http://127.0.0.1:${info.port}${apiPath}`
-  const res = await fetch(url, {
+  const res = await fetchLoopback(url, {
     method,
     headers: {
       Authorization: `Bearer ${info.token}`,

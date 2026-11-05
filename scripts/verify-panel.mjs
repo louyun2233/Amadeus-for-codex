@@ -1,4 +1,5 @@
 #!/usr/bin/env node
+import { fetchLoopback } from '../src/shared/loopback-http.mjs'
 /**
  * Read-only readiness check for the Windows Qt/OpenGL panel.
  * Uses the installed native runtime and loopback daemon; it never launches a
@@ -85,7 +86,7 @@ record('daemon connection metadata', info !== null, info ? '' : 'Start Amadeus b
 
 async function get(apiPath) {
   try {
-    const response = await fetch(`http://127.0.0.1:${info.port}${apiPath}`, {
+    const response = await fetchLoopback(`http://127.0.0.1:${info.port}${apiPath}`, {
       headers: { Authorization: `Bearer ${info.token}` },
       signal: AbortSignal.timeout(5000),
     })

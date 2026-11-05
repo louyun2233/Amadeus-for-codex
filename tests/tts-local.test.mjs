@@ -37,7 +37,7 @@ function sseResponse(audio = wavFixture(), { ending = 'done', corrupt = false, s
 function localTts(paths) {
   const config = new ConfigStore(paths)
   config.update({ voice: { provider: 'qwen-local', name: 'kurisu_reference_fax' } })
-  return new TtsService({ paths, config, secretStore: null, localQwenReady: async () => true })
+  return new TtsService({ localFetch: (...args) => globalThis.fetch(...args), paths, config, secretStore: null, localQwenReady: async () => true })
 }
 
 test('local Qwen clone is synthesized and cached without switching speakers', async () => {
@@ -52,7 +52,7 @@ test('local Qwen clone is synthesized and cached without switching speakers', as
       name: 'kurisu_reference_fax',
       localModel: 'Qwen/Qwen3-TTS-12Hz-0.6B-Base',
     } })
-    const tts = new TtsService({ paths, config, secretStore: null })
+    const tts = new TtsService({ localFetch: (...args) => globalThis.fetch(...args), paths, config, secretStore: null })
     globalThis.fetch = async (url, options) => {
       if (String(url).endsWith('/v1/models')) {
         return { ok: true, json: async () => ({ data: [] }) }
@@ -89,7 +89,7 @@ test('local Qwen failure is shown without an Edge fallback', async () => {
   try {
     const config = new ConfigStore(paths)
     config.update({ voice: { provider: 'qwen-local', name: 'kurisu_reference_fax', stability: true } })
-    const tts = new TtsService({ paths, config, secretStore: null })
+    const tts = new TtsService({ localFetch: (...args) => globalThis.fetch(...args), paths, config, secretStore: null })
     globalThis.fetch = async (url) => {
       if (String(url).endsWith('/v1/models')) {
         return { ok: true, json: async () => ({ data: [] }) }
@@ -113,7 +113,7 @@ test('every local speech request waits through a cold start without changing voi
   try {
     const config = new ConfigStore(paths)
     config.update({ voice: { provider: 'qwen-local', name: 'kurisu_reference_fax' } })
-    const tts = new TtsService({
+    const tts = new TtsService({ localFetch: (...args) => globalThis.fetch(...args),
       paths, config, secretStore: null,
       localQwenReady: async () => ++readinessAttempts >= 3,
       localQwenWaitMs: 1000,
@@ -141,7 +141,7 @@ test('local speech reports a bounded startup failure without an Edge fallback', 
   try {
     const config = new ConfigStore(paths)
     config.update({ voice: { provider: 'qwen-local', name: 'kurisu_reference_fax' } })
-    const tts = new TtsService({
+    const tts = new TtsService({ localFetch: (...args) => globalThis.fetch(...args),
       paths, config, secretStore: null,
       localQwenReady: async () => false,
       localQwenWaitMs: 10,

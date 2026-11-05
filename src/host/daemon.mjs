@@ -1,15 +1,13 @@
 import http from 'node:http'
 import fs from 'node:fs'
 import path from 'node:path'
-import crypto from 'node:crypto'
-import { createAuth } from './auth.mjs'
+import { createAuth, newToken } from './auth.mjs'
 import { createChatRoutes } from './chat-routes.mjs'
 import { createMemoryRoutes } from './memory-routes.mjs'
-import { createVoiceRoutes } from './voice-routes.mjs'
 import { ping } from './daemon-client.mjs'
 import { maskConfig } from '../core/config.mjs'
-import { STT_MAX_BYTES } from '../core/stt.mjs'
-import { ensureIncomingRing, mediaEffectPath, contentTypeFor } from '../core/sounds.mjs'
+import { ensureIncomingRing, contentTypeFor } from '../core/sounds.mjs'
+import { redactText } from '../core/redact.mjs'
 import { ErrorCode } from '../shared/errors.mjs'
 import { APP_VERSION } from '../shared/version.mjs'
 import { taskLinePicker } from '../core/task-lines.mjs'
@@ -19,9 +17,8 @@ const logger = createChildLogger('[daemon]')
 const MAX_BODY = 1024 * 1024
 
 /**
- * Panel tabs identify themselves with a per-tab id (sessionStorage on the
- * client). The SSE stream carries it as a query parameter because EventSource
- * cannot set headers; regular requests carry it as a header.
+ * Native windows identify themselves with a generated client id. The SSE
+ * reconnect also carries that public id; authentication stays in the header.
  */
 function clientIdOf(req, url) {
   const fromHeader = req.headers['x-amadeus-client']
@@ -29,21 +26,6 @@ function clientIdOf(req, url) {
   const fromQuery = url.searchParams.get('client')
   if (typeof fromQuery === 'string' && /^[A-Za-z0-9_-]{4,64}$/.test(fromQuery)) return fromQuery
   return null
-}
-
-const MIME = {
-  '.html': 'text/html; charset=utf-8',
-  '.css': 'text/css; charset=utf-8',
-  '.js': 'text/javascript; charset=utf-8',
-  '.json': 'application/json; charset=utf-8',
-  '.png': 'image/png',
-  '.jpg': 'image/jpeg',
-  '.webp': 'image/webp',
-  '.svg': 'image/svg+xml',
-  '.mp3': 'audio/mpeg',
-  '.moc': 'application/octet-stream',
-  '.moc3': 'application/octet-stream',
-  '.model.json': 'application/json; charset=utf-8',
 }
 
 function sendJson(res, status, body) {
@@ -97,18 +79,8 @@ async function readBody(req, max = MAX_BODY) {
   try {
     return JSON.parse(raw.toString('utf8'))
   } catch (e) {
-    throw new Error('invalid json body')
+    throw Object.assign(new Error('invalid json body'), { status: 400 })
   }
-}
-
-/**
- * Binary variant of readBody, for the one route that carries audio.
- * The cap is enforced while streaming, so an oversized upload is never held in
- * memory in full.
- */
-async function readRaw(req, max) {
-  const raw = await collectBody(req, max)
-  return Buffer.isBuffer(raw) ? raw : Buffer.from([])
 }
 
 export function createDaemon(deps) {
@@ -123,7 +95,6 @@ export function createDaemon(deps) {
     tts,
     stt,
     systemTts,
-    voices,
     hub,
     diag,
     assets,
@@ -131,13 +102,12 @@ export function createDaemon(deps) {
     version = APP_VERSION,
   } = deps
 
-  const token = crypto.randomBytes(32).toString('base64url')
+  const token = newToken()
   const auth = createAuth(token)
   let server = null
   let port = 0
   let runtimeTimer = null
-  // Ring buffer of client-side errors. Without this a panel crash is invisible:
-  // it only reaches the browser console, which the user never opens.
+  // Bounded, minimised reports from the native audio worker.
   const clientReports = []
 
   const guard = (handler) => async (req, res, url, ctx) => {
@@ -147,7 +117,7 @@ export function createDaemon(deps) {
       const code =
         e && e.code === ErrorCode.INVALID_ARGUMENT ? 400 : Number(e && e.status) || 500
       logger.warn('route error:', e && e.message ? e.message : e)
-      if (!res.headersSent) sendJson(res, code, { ok: false, error: e.message || String(e) })
+      if (!res.headersSent) sendJson(res, code, { ok: false, error: redactText(e.message || String(e)) })
       else res.end()
     }
   }
@@ -244,12 +214,10 @@ export function createDaemon(deps) {
         voice: url.searchParams.get('voice') || undefined,
         emotion,
       })
-      const words = Array.isArray(result.words) ? result.words : []
       res.writeHead(200, {
         'Content-Type': result.mime || 'audio/mpeg',
         'Content-Length': result.audio.length,
-        'Cache-Control': 'public, max-age=3600',
-        'X-Amadeus-Words': Buffer.from(JSON.stringify(words)).toString('base64'),
+        'Cache-Control': 'no-store',
         'X-Amadeus-Cache': result.cached ? 'hit' : 'miss',
         'X-Amadeus-Provider': tts.providerId(),
       })
@@ -275,7 +243,7 @@ export function createDaemon(deps) {
         return sendJson(res, 404, {
           ok: false,
           error: 'ring unreadable',
-          reason: e && e.message ? e.message : null,
+          reason: e && e.message ? redactText(e.message) : null,
         })
       }
       res.writeHead(200, {
@@ -283,18 +251,6 @@ export function createDaemon(deps) {
         'Content-Length': audio.length,
         'Cache-Control': 'no-store',
         'X-Amadeus-Ring': ring.source,
-      })
-      res.end(audio)
-    }),
-
-    'GET /amadeus/sound/media': guard(async (req, res, url) => {
-      const file = mediaEffectPath(paths, url.searchParams.get('event'))
-      if (!file) return sendJson(res, 404, { ok: false, error: 'media sound unavailable' })
-      const audio = fs.readFileSync(file)
-      res.writeHead(200, {
-        'Content-Type': 'audio/wav',
-        'Content-Length': audio.length,
-        'Cache-Control': 'public, max-age=3600',
       })
       res.end(audio)
     }),
@@ -389,9 +345,9 @@ export function createDaemon(deps) {
       const entry = {
         ts: Date.now(),
         level: ['error', 'warn', 'info'].includes(body?.level) ? body.level : 'info',
-        message: String(body?.message ?? '').slice(0, 300),
-        detail: String(body?.detail ?? '').slice(0, 1000),
-        where: String(body?.where ?? '').slice(0, 120),
+        message: redactText(body?.message ?? '').slice(0, 300),
+        detail: redactText(body?.detail ?? '').slice(0, 1000),
+        where: redactText(body?.where ?? '').slice(0, 120),
       }
       if (entry.message.length > 0) {
         clientReports.push(entry)
@@ -425,12 +381,6 @@ export function createDaemon(deps) {
       sendJson(res, 200, { ok: true, ...proactive.status(), clients: hub.status().clients })
     }),
 
-    'POST /amadeus/proactive/tick': guard(async (req, res) => {
-      if (!proactive) return sendJson(res, 503, { ok: false, error: 'scheduler unavailable' })
-      const decision = await proactive.tick()
-      sendJson(res, 200, { ok: true, decision, ...proactive.status() })
-    }),
-
     // A tab claims audio when it gains focus, so speech follows the window the
     // user is actually looking at instead of the first tab that happened to open.
     'POST /amadeus/client/active': guard(async (req, res, url) => {
@@ -450,38 +400,10 @@ export function createDaemon(deps) {
         secrets.set(name, body?.value ?? '')
       } catch (e) {
         const status = e && e.code === ErrorCode.INVALID_ARGUMENT ? 400 : 409
-        return sendJson(res, status, { ok: false, error: e.message, degrade: e.degrade || null })
+        return sendJson(res, status, { ok: false, error: redactText(e.message), degrade: e.degrade || null })
       }
       audit.record({ source: 'panel', tool: 'secrets.set', summary: name })
       sendJson(res, 200, { ok: true, secret: secrets.describe(name) })
-    }),
-
-    ...createVoiceRoutes({ guard, readBody, sendJson, voices, systemTts, config, secrets, audit }),
-
-    // Speech-to-text. The recording is forwarded, never stored: the transcript
-    // is the only thing that comes back. With `provider: browser` the daemon
-    // refuses (`use-browser`) so the panel keeps its own recognition path.
-    'POST /amadeus/stt': guard(async (req, res) => {
-      if (!stt) return sendJson(res, 503, { ok: false, error: 'speech input unavailable' })
-      let audio
-      try {
-        audio = await readRaw(req, STT_MAX_BYTES)
-      } catch (e) {
-        return sendJson(res, 413, { ok: false, error: e.message, degrade: 'audio-too-large' })
-      }
-      try {
-        const out = await stt.transcribe(audio, {
-          mime: req.headers['content-type'] || '',
-          lang: config.getPath('speechInput.lang'),
-        })
-        // Byte count only: a transcript is private conversation content.
-        audit.record({ source: 'panel', tool: 'stt.transcribe', summary: `${audio.length} bytes` })
-        sendJson(res, 200, { ok: true, ...out })
-      } catch (e) {
-        const status =
-          e.code === ErrorCode.INVALID_ARGUMENT ? 400 : e.code === ErrorCode.DEGRADED ? 409 : 502
-        sendJson(res, status, { ok: false, error: e.message, degrade: e.degrade || null })
-      }
     }),
 
     'POST /amadeus/assets/install': guard(async (req, res) => {
@@ -535,11 +457,17 @@ export function createDaemon(deps) {
         }, 150)
         return
       }
-      sendJson(res, 400, { ok: false, error: `unknown cmd: ${cmd}` })
+      sendJson(res, 400, { ok: false, error: 'unknown command' })
     }),
   }
 
   async function handle(req, res) {
+    res.setHeader('X-Content-Type-Options', 'nosniff')
+    res.setHeader('Referrer-Policy', 'no-referrer')
+    res.setHeader('Content-Security-Policy', "default-src 'none'; frame-ancestors 'none'")
+    if (!req.url?.startsWith('/') || req.url.startsWith('//')) {
+      return sendJson(res, 400, { ok: false, error: 'invalid request target' })
+    }
     const url = new URL(req.url, `http://127.0.0.1:${port}`)
     const pathname = url.pathname
 
@@ -551,18 +479,12 @@ export function createDaemon(deps) {
       return sendJson(res, authResult.status, { ok: false, error: authResult.reason })
     }
 
-    const headers = {}
-    if (authResult.kind === 'token-exchange' && authResult.sessionId) {
-      headers['Set-Cookie'] = auth.cookieHeader(authResult.sessionId)
-    }
-
     // SSE stream
     if (req.method === 'GET' && pathname === '/amadeus/events') {
       res.writeHead(200, {
         'Content-Type': 'text/event-stream; charset=utf-8',
         'Cache-Control': 'no-cache, no-transform',
         Connection: 'keep-alive',
-        ...headers,
       })
       res.write('retry: 3000\n\n')
       const remove = hub.addClient(res, clientIdOf(req, url))
@@ -582,17 +504,15 @@ export function createDaemon(deps) {
     }
 
     if (route) {
-      if (Object.keys(headers).length > 0) res.setHeader('Set-Cookie', headers['Set-Cookie'])
       return route(req, res, url)
     }
 
-    // dynamic session routes: /amadeus/sessions/:id[/messages]
-    const sessionMatch = pathname.match(/^\/amadeus\/sessions\/([A-Za-z0-9_-]{4,80})(\/messages)?$/)
+    // Native history is read-only; creation belongs to the chat lifecycle.
+    const sessionMatch = pathname.match(/^\/amadeus\/sessions\/([A-Za-z0-9_-]{4,80})\/messages$/)
     if (sessionMatch) {
       const id = sessionMatch[1]
-      const isMessages = Boolean(sessionMatch[2])
       try {
-        if (isMessages && req.method === 'GET') {
+        if (req.method === 'GET') {
           const session = sessions.get(id)
           return sendJson(res, 200, {
             ok: true,
@@ -600,64 +520,14 @@ export function createDaemon(deps) {
             messages: session.messages.slice(-200),
           })
         }
-        if (!isMessages && req.method === 'PATCH') {
-          const body = await readBody(req)
-          const session = sessions.rename(id, body?.name)
-          return sendJson(res, 200, { ok: true, session })
-        }
-        if (!isMessages && req.method === 'DELETE') {
-          const result = sessions.remove(id)
-          audit.record({ source: 'panel', tool: 'session.remove', summary: id })
-          return sendJson(res, 200, { ok: true, ...result })
-        }
       } catch (e) {
         const status = e && e.code === ErrorCode.NOT_FOUND ? 404 : 400
-        return sendJson(res, status, { ok: false, error: e.message })
+        return sendJson(res, status, { ok: false, error: redactText(e.message) })
       }
       return sendJson(res, 405, { ok: false, error: 'method not allowed' })
     }
 
-    if (req.method === 'GET' && pathname.startsWith('/amadeus/assets/')) {
-      const rel = pathname.slice('/amadeus/assets/'.length)
-      // Only the two logical namespaces are served. The manager resolves them
-      // against the manifest and re-checks containment; there is no way to ask
-      // for an arbitrary path in the cache tree.
-      let file = null
-      if (rel.startsWith('runtime/')) file = assets?.resolveRuntime(rel.slice('runtime/'.length))
-      else if (rel.startsWith('current/')) file = assets?.resolveCurrent(rel.slice('current/'.length))
-      if (!file) {
-        res.writeHead(404)
-        res.end('not found')
-        return
-      }
-      return serveStatic(res, file, headers)
-    }
-
-    res.writeHead(404, { 'Content-Type': 'application/json; charset=utf-8' })
-    res.end(JSON.stringify({ ok: false, error: 'not found', path: pathname }))
-  }
-
-  function serveStatic(res, file, extraHeaders = {}) {
-    let data
-    try {
-      data = fs.readFileSync(file)
-    } catch {
-      res.writeHead(404, { 'Content-Type': 'text/plain; charset=utf-8' })
-      res.end('not found')
-      return
-    }
-    const ext = path.extname(file).toLowerCase()
-    res.writeHead(200, {
-      'Content-Type': MIME[ext] || 'application/octet-stream',
-      'Content-Length': data.length,
-      'Cache-Control': ext === '.html' ? 'no-store' : 'no-cache',
-      ...extraHeaders,
-    })
-    res.end(data)
-  }
-
-  function urlForPanel() {
-    return `http://127.0.0.1:${port}/amadeus/panel/index.html?token=${token}`
+    sendJson(res, 404, { ok: false, error: 'not found' })
   }
 
   async function start() {
@@ -667,6 +537,9 @@ export function createDaemon(deps) {
         if (!res.headersSent) sendJson(res, 500, { ok: false, error: 'internal error' })
       })
     })
+    server.requestTimeout = 15000
+    server.headersTimeout = 10000
+    server.maxHeadersCount = 64
 
     // Prefer the port the previous run used: a panel window that is still open
     // then keeps pointing at a live address instead of a dead one.
@@ -698,26 +571,6 @@ export function createDaemon(deps) {
     } catch {
       if (previousPort) await listen(0)
       else throw new Error('could not bind the loopback port')
-    }
-    // Windows can hand listen(0) a port that Fetch (and Chromium) forbids,
-    // such as 10080. A healthy server on that port looks like "Network error"
-    // to the panel. Verify browser-style access before publishing its address.
-    let reachable = false
-    for (let attempt = 0; attempt < 12; attempt++) {
-      try {
-        await fetch(`http://127.0.0.1:${server.address().port}/__amadeus_port_probe`, {
-          signal: AbortSignal.timeout(2000),
-        })
-        reachable = true
-        break
-      } catch {
-        await new Promise((resolve) => server.close(resolve))
-        await listen(0)
-      }
-    }
-    if (!reachable) {
-      await new Promise((resolve) => server.close(resolve))
-      throw new Error('could not bind a browser-reachable loopback port')
     }
     port = server.address().port
     try {
@@ -773,7 +626,7 @@ export function createDaemon(deps) {
       }
     }
     logger.info(`listening on http://127.0.0.1:${port}`)
-    return { port, token, url: urlForPanel() }
+    return { port, token }
   }
 
   async function stop() {
@@ -807,5 +660,5 @@ export function createDaemon(deps) {
     log.info('[daemon] stopped')
   }
 
-  return { start, stop, urlForPanel, get port() { return port }, get token() { return token }, routes }
+  return { start, stop, get port() { return port }, get token() { return token }, routes }
 }

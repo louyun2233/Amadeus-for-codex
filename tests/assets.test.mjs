@@ -66,15 +66,10 @@ function tarFixture() {
   ])
 }
 
-function runtimeFixture() {
-  return Buffer.from('/* fake cubism2 runtime */\n', 'utf8')
-}
-
-async function setup({ modelSources, runtimeSources, modelBody, runtimeBody, corruptModel = false } = {}) {
+async function setup({ modelSources, modelBody, corruptModel = false } = {}) {
   const paths = tempPaths()
   const tarBuf = modelBody || tarFixture()
-  const jsBuf = runtimeBody || runtimeFixture()
-  const served = { '/kurisu.tar.gz': tarBuf, '/live2d.min.js': jsBuf }
+  const served = { '/kurisu.tar.gz': tarBuf }
   const srv = await startServer(served)
   const base = `http://127.0.0.1:${srv.port}`
   const packs = [
@@ -91,21 +86,10 @@ async function setup({ modelSources, runtimeSources, modelBody, runtimeBody, cor
       entry: 'kurisu.model.json',
       sources: modelSources || [`${base}/kurisu.tar.gz`],
     },
-    {
-      id: 'cubism2-runtime',
-      kind: 'runtime',
-      engine: 'cubism2',
-      version: 'test-1',
-      format: 'js',
-      sizeBytes: jsBuf.length,
-      sha256: sha256(jsBuf),
-      target: 'live2d.min.js',
-      sources: runtimeSources || [`${base}/live2d.min.js`],
-    },
   ]
   const registryFile = writeRegistry(paths.dataRoot, packs)
   const manager = new AssetManager({ paths, config: null, audit: null, hub: null, registryFile })
-  return { paths, srv, manager, base, tarBuf, jsBuf }
+  return { paths, srv, manager, base, tarBuf }
 }
 
 test('assertAllowedUrl permits https and loopback http only', () => {
@@ -135,7 +119,7 @@ test('installs a model pack: extraction, manifest, atomic switch', async () => {
 
     const status = manager.status()
     assert.equal(status.packs.find((p) => p.kind === 'model').installed, true)
-    assert.equal(status.degrade, 'missing-cubism2-runtime')
+    assert.equal(status.degrade, null)
   } finally {
     await srv.close()
     cleanup(paths)
@@ -165,28 +149,22 @@ test('a source-defined character uses its own model entry and cache namespace', 
     await manager.install('example-model')
     assert.equal(manager.status().activeModel.entryName, 'avatar.model.json')
     assert.equal(manager.status().activeModel.character, 'example')
-    assert.ok(manager.resolveCurrent('avatar.model.json')?.endsWith('avatar.model.json'))
-    assert.equal(manager.verify().ok, false) // runtime is deliberately not installed
+    assert.equal(manager.verify().ok, true)
     manager.config = { getPath: () => 'another' }
     assert.equal(manager.status().activeModel, null)
-    assert.equal(manager.resolveCurrent('avatar.model.json'), null)
   } finally {
     await srv.close()
     cleanup(paths)
   }
 })
 
-test('installs a runtime pack and verifies its hash', async () => {
-  const { paths, srv, manager, jsBuf } = await setup()
+test('web runtime packs are rejected by the native asset registry', async () => {
+  const { paths, srv } = await setup()
   try {
-    const result = await manager.install('cubism2-runtime')
-    assert.equal(result.ok, true)
-    assert.equal(result.matches, true)
-    assert.equal(sha256File(path.join(paths.runtimeCacheDir, 'cubism2', 'live2d.min.js')), sha256(jsBuf))
-  } finally {
-    await srv.close()
-    cleanup(paths)
-  }
+    const registryFile = writeRegistry(paths.dataRoot, [{ id: 'old-web-runtime', kind: 'runtime', version: '1' }])
+    const manager = new AssetManager({ paths, registryFile })
+    assert.throws(() => manager.status(), /native model packs/)
+  } finally { await srv.close(); cleanup(paths) }
 })
 
 test('a checksum mismatch aborts the install and leaves nothing behind', async () => {
@@ -230,9 +208,9 @@ test('falls back to the next source when the first one fails', async () => {
 test('the download cache is reused across installs', async () => {
   const { paths, srv, manager } = await setup()
   try {
-    await manager.install('cubism2-runtime')
-    await manager.install('cubism2-runtime')
-    assert.equal(srv.hits.get('/live2d.min.js'), 1)
+    await manager.install('kurisu-model')
+    await manager.install('kurisu-model')
+    assert.equal(srv.hits.get('/kurisu.tar.gz'), 1)
   } finally {
     await srv.close()
     cleanup(paths)
@@ -249,62 +227,6 @@ test('concurrent installs of the same pack are de-duplicated', async () => {
     assert.equal(a.ok, true)
     assert.equal(b.ok, true)
     assert.equal(srv.hits.get('/kurisu.tar.gz'), 1)
-  } finally {
-    await srv.close()
-    cleanup(paths)
-  }
-})
-
-test('resolveCurrent refuses traversal and unknown files', async () => {
-  const { paths, srv, manager } = await setup()
-  try {
-    await manager.install('kurisu-model')
-    assert.ok(manager.resolveCurrent('kurisu.model.json'))
-    assert.equal(manager.resolveCurrent('../../package.json'), null)
-    assert.equal(manager.resolveCurrent('nope.txt'), null)
-    assert.equal(manager.resolveCurrent('shizuku.moc'), path.join(paths.modelsDir, 'kurisu', 'versions', 'test-1', 'shizuku.moc'))
-  } finally {
-    await srv.close()
-    cleanup(paths)
-  }
-})
-
-test('installFromFile accepts a verified local archive and rejects a wrong one', async () => {
-  const { paths, srv, manager, tarBuf } = await setup()
-  const local = path.join(paths.dataRoot, 'local-kurisu.tar.gz')
-  try {
-    fs.writeFileSync(local, tarBuf)
-    const result = await manager.installFromFile('kurisu-model', local)
-    assert.equal(result.ok, true)
-    assert.ok(manager.status().packs.find((p) => p.kind === 'model').installed)
-
-    fs.writeFileSync(local, Buffer.from('not the archive'))
-    await assert.rejects(() => manager.installFromFile('kurisu-model', local), /checksum mismatch/)
-  } finally {
-    await srv.close()
-    cleanup(paths)
-  }
-})
-
-test('verify reports problems when nothing is installed', async () => {
-  const { paths, srv, manager } = await setup()
-  try {
-    const report = manager.verify()
-    assert.equal(report.ok, false)
-    assert.equal(report.problems.length, 2)
-  } finally {
-    await srv.close()
-    cleanup(paths)
-  }
-})
-
-test('installAll installs both packs end to end', async () => {
-  const { paths, srv, manager } = await setup()
-  try {
-    const result = await manager.installAll()
-    assert.equal(result.ok, true)
-    assert.equal(result.status.ready, true)
-    assert.equal(manager.verify().ok, true)
   } finally {
     await srv.close()
     cleanup(paths)

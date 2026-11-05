@@ -13,6 +13,7 @@
  * nothing that used to happen stops happening.
  */
 import fs from 'node:fs'
+import { fetchLoopback } from '../src/shared/loopback-http.mjs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 import { spawn } from 'node:child_process'
@@ -121,7 +122,7 @@ async function main() {
     return
   }
   try {
-    const res = await fetch(`http://127.0.0.1:${info.port}/amadeus/notify`, {
+    const res = await fetchLoopback(`http://127.0.0.1:${info.port}/amadeus/notify`, {
       method: 'POST',
       headers: { Authorization: `Bearer ${info.token}`, 'Content-Type': 'application/json' },
       // No payload contents are sent: the daemon only needs the classification

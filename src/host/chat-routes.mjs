@@ -1,16 +1,11 @@
 /** Session creation and turn lifecycle endpoints for the panel. */
 import { parseChatImage } from '../core/chat-image.mjs'
+import { redactText } from '../core/redact.mjs'
 
 export function createChatRoutes({ guard, readBody, sendJson, sessions, chat, config, proactive, clientIdOf }) {
   return {
     'GET /amadeus/sessions': guard(async (req, res) => {
       sendJson(res, 200, { ok: true, sessions: sessions.list() })
-    }),
-
-    'POST /amadeus/sessions': guard(async (req, res) => {
-      const body = await readBody(req)
-      const session = sessions.create({ name: body?.name, workspace: body?.workspace })
-      sendJson(res, 200, { ok: true, session })
     }),
 
     'GET /amadeus/chat': guard(async (req, res, url) => {
@@ -21,7 +16,7 @@ export function createChatRoutes({ guard, readBody, sendJson, sessions, chat, co
         return sendJson(res, 403, { ok: false, error: 'turn belongs to another panel' })
       }
       sendJson(res, 200, { ok: true, turn: {
-        id: turn.id, status: turn.status, phase: turn.phase, error: turn.error,
+        id: turn.id, status: turn.status, phase: turn.phase, error: turn.error ? redactText(turn.error) : turn.error,
         sessionId: turn.sessionId, closed: turn.closed === true,
         result: turn.status === 'done' && turn.parsed ? {
           zh: turn.parsed.zh, ja: turn.parsed.ja, emotion: turn.parsed.emotion,

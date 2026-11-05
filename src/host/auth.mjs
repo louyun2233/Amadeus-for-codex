@@ -9,8 +9,7 @@ export function isLoopback(req) {
   return (
     addr === '127.0.0.1' ||
     addr === '::1' ||
-    addr === '::ffff:127.0.0.1' ||
-    addr === ''
+    addr === '::ffff:127.0.0.1'
   )
 }
 
@@ -21,89 +20,32 @@ function timingSafeEqual(a, b) {
   return crypto.timingSafeEqual(bufA, bufB)
 }
 
-/**
- * Every route goes through the same check — this is the fix for the DSH
- * version where only the RPC bridge was protected and /memory, /chat and /stt
- * were reachable by anyone who could reach the port.
- */
-export function authorize(req, url, token) {
-  if (!isLoopback(req)) return { ok: false, status: 403, reason: 'forbidden' }
-  const header = req.headers.authorization || ''
-  const fromHeader = header.startsWith('Bearer ') ? header.slice(7) : ''
-  const fromQuery = url.searchParams.get('token') || ''
-  const provided = fromHeader || fromQuery
-  if (!provided || !timingSafeEqual(provided, token)) {
-    return { ok: false, status: 401, reason: 'unauthorized' }
+function localHost(req) {
+  const host = req.headers?.host
+  if (typeof host !== 'string' || !host || /[\s/@?#\\]/.test(host)) return false
+  try {
+    const parsed = new URL('http://' + host)
+    if (!['127.0.0.1', 'localhost', '[::1]'].includes(parsed.hostname)) return false
+    return !req.socket?.localPort || Number(parsed.port || 80) === req.socket.localPort
+  } catch {
+    return false
   }
-  return { ok: true }
 }
 
-export const SESSION_COOKIE = 'amadeus_session'
-
-function parseCookies(header) {
-  const out = {}
-  for (const part of String(header || '').split(';')) {
-    const idx = part.indexOf('=')
-    if (idx < 0) continue
-    out[part.slice(0, idx).trim()] = decodeURIComponent(part.slice(idx + 1).trim())
-  }
-  return out
-}
-
-/**
- * Authentication for the local daemon.
- *
- * - CLI/MCP/notify authenticate with `Authorization: Bearer <token>`.
- * - The browser panel exchanges the one-time `?token=` in the URL for an
- *   HttpOnly session cookie, so the long-lived token does not stay in the
- *   address bar and is never readable from JavaScript.
- */
-export function createAuth(token, { sessionTtlMs = 12 * 60 * 60 * 1000 } = {}) {
-  const sessions = new Map()
-
-  const prune = () => {
-    const now = Date.now()
-    for (const [id, exp] of sessions) if (exp < now) sessions.delete(id)
-  }
-
+/** Native, CLI and MCP clients authenticate only with a header over loopback. */
+export function createAuth(token) {
+  if (typeof token !== 'string' || !token || token.length > 256) throw new Error('invalid daemon token')
   return {
-    token,
-    issueSession() {
-      prune()
-      const id = crypto.randomBytes(24).toString('base64url')
-      sessions.set(id, Date.now() + sessionTtlMs)
-      return id
-    },
-    cookieHeader(id) {
-      const maxAge = Math.floor(sessionTtlMs / 1000)
-      return `${SESSION_COOKIE}=${id}; HttpOnly; SameSite=Strict; Path=/; Max-Age=${maxAge}`
-    },
-    hasCookieSession(req) {
-      const id = parseCookies(req.headers.cookie)[SESSION_COOKIE]
-      if (!id) return false
-      const exp = sessions.get(id)
-      if (!exp || exp < Date.now()) {
-        sessions.delete(id)
-        return false
-      }
-      return true
-    },
-    /** Validate a request; `exchange` is true when ?token= was used. */
     check(req, url) {
-      if (!isLoopback(req)) return { ok: false, status: 403, reason: 'forbidden' }
-      const header = req.headers.authorization || ''
-      const bearer = header.startsWith('Bearer ') ? header.slice(7) : ''
-      if (bearer && timingSafeEqual(bearer, token)) return { ok: true, kind: 'bearer' }
-      const fromQuery = url.searchParams.get('token') || ''
-      if (fromQuery && timingSafeEqual(fromQuery, token)) {
-        return { ok: true, kind: 'token-exchange', sessionId: this.issueSession() }
+      if (!isLoopback(req) || !localHost(req) || req.headers.origin !== undefined ||
+          req.headers['sec-fetch-site'] !== undefined) {
+        return { ok: false, status: 403, reason: 'forbidden' }
       }
-      if (this.hasCookieSession(req)) return { ok: true, kind: 'cookie' }
+      if (url.searchParams.has('token')) return { ok: false, status: 401, reason: 'unauthorized' }
+      const header = typeof req.headers.authorization === 'string' ? req.headers.authorization : ''
+      const bearer = header.startsWith('Bearer ') ? header.slice(7) : ''
+      if (bearer && bearer.length <= 256 && timingSafeEqual(bearer, token)) return { ok: true, kind: 'bearer' }
       return { ok: false, status: 401, reason: 'unauthorized' }
-    },
-    sessionCount() {
-      prune()
-      return sessions.size
     },
   }
 }

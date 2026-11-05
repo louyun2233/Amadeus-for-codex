@@ -32,20 +32,13 @@ some tool logic are derived from:
      pre-flight command, and a one-line command for importing your own
      character file.
 
-Legacy web source (kept in the repository, excluded from the release ZIP)
---------------------------------------------------------------------------
+Retired web implementation
+--------------------------
 
-  - pixi.js 7.4.2 — https://github.com/pixijs/pixijs
-    MIT License, Copyright (c) 2013-2023 Mathew Groves, Chad Engler
-    See src/panel/vendor/LICENSE.pixi.txt
-
-  - pixi-live2d-display 0.4.0 (cubism2 build) — https://github.com/guansss/pixi-live2d-display
-    MIT License, Copyright (c) 2020 Guan
-    See src/panel/vendor/LICENSE.pixi-live2d-display.txt
-
-The release ZIP does not include pixi.js, pixi-live2d-display, WebView2 SDK,
-or a Cubism 2 JavaScript runtime. The old web implementation remains in
-src/panel and scripts/webview2 in the source repository only.
+The obsolete web panel, pixi.js, pixi-live2d-display, WebView2 SDK and their
+browser verification tools have been removed from the current source tree.
+Earlier Git revisions retain the original third-party license notices beside
+their corresponding code. The active panel uses native Qt/OpenGL and Live2D.
 
 Release asset
 -------------

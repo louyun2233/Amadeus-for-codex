@@ -1,6 +1,6 @@
-const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 }
+import { redactText as minimiseText, redactValue } from '../core/redact.mjs'
 
-const SENSITIVE_KEY = /(key|token|secret|password|authorization|passwd|credential)/i
+const LEVELS = { debug: 10, info: 20, warn: 30, error: 40 }
 
 function currentLevel() {
   const raw = String(process.env.AMADEUS_LOG_LEVEL || 'info').toLowerCase()
@@ -9,26 +9,11 @@ function currentLevel() {
 
 /** Mask any value that looks like a secret. Never log raw keys. */
 export function mask(value) {
-  if (value === null || value === undefined) return value
-  if (typeof value === 'string') {
-    if (value.length <= 8) return '***'
-    return value.slice(0, 3) + '***' + value.slice(-2)
-  }
-  if (Array.isArray(value)) return value.map(mask)
-  if (typeof value === 'object') {
-    const out = {}
-    for (const [k, v] of Object.entries(value)) {
-      out[k] = SENSITIVE_KEY.test(k) ? (v ? '***' : '') : mask(v)
-    }
-    return out
-  }
-  return value
+  return redactValue(value)
 }
 
 export function redactText(text) {
-  return String(text)
-    .replace(/(Bearer\s+)[A-Za-z0-9._\-]+/gi, '$1***')
-    .replace(/(sk-[A-Za-z0-9._\-]{6,})/g, 'sk-***')
+  return minimiseText(text)
 }
 
 function emit(level, args) {
@@ -39,7 +24,7 @@ function emit(level, args) {
     try {
       return JSON.stringify(mask(a))
     } catch {
-      return String(a)
+      return '[unserializable]'
     }
   })
   const line = `[${ts}] ${level.toUpperCase()} ${parts.join(' ')}`

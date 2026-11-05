@@ -1,5 +1,6 @@
 #!/usr/bin/env node
 import fs from 'node:fs'
+import { fetchLoopback } from '../src/shared/loopback-http.mjs'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 import { resolvePaths, ensureDirs } from '../src/shared/paths.mjs'
@@ -56,7 +57,7 @@ async function writeReport() {
   const auth = { Authorization: `Bearer ${info.token}` }
   const get = async (apiPath) => {
     try {
-      const res = await fetch(`http://127.0.0.1:${info.port}${apiPath}`, { headers: auth })
+      const res = await fetchLoopback(`http://127.0.0.1:${info.port}${apiPath}`, { headers: auth })
       return await res.json()
     } catch (e) {
       return { ok: false, error: e && e.message ? e.message : String(e) }

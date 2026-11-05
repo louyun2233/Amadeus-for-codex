@@ -2,6 +2,8 @@ import fs from 'node:fs'
 import path from 'node:path'
 import os from 'node:os'
 import { spawn, execFile } from 'node:child_process'
+import { companionToolArgs, companionEnvironment, listConfiguredMcpServers } from './codex-safety.mjs'
+import { fetchLoopback } from '../shared/loopback-http.mjs'
 import { AmadeusError, ErrorCode } from '../shared/errors.mjs'
 import { createChildLogger } from '../shared/log.mjs'
 import { APP_VERSION } from '../shared/version.mjs'
@@ -97,11 +99,13 @@ export function codexSpawnTarget(exe) {
 }
 
 /** Per-call override leaves the user's coding sessions at their own effort. */
-export function codexExecArgs({ cwd, outFile, model = '', imageFile = '' }) {
+export function codexExecArgs({ cwd, outFile, model = '', imageFile = '', mcpServers = [] }) {
   const args = [
     'exec', '--json', '--ephemeral', '--skip-git-repo-check',
     '--config', 'model_reasoning_effort="low"',
+    '--config', 'approval_policy="never"',
     '-s', 'read-only', '-C', cwd, '-o', outFile,
+    ...companionToolArgs(mcpServers),
   ]
   if (model) args.push('-m', model)
   if (imageFile) args.push('-i', imageFile)
@@ -164,16 +168,18 @@ export function codexFailureFromLine(line) {
  *   only this call receives a supported override; global settings stay intact.
  * - the run happens in a neutral empty directory so the companion cannot read
  *   the user's project just by being chatty.
- * - no flag can fully disable tool use, so the prompt contract forbids it and
- *   we run with a read-only sandbox.
+ * - companion calls disable command/image/web tools, apps, plugins and every
+ *   configured MCP server; the user's interactive coding settings stay intact.
  */
 export class CodexExecAdapter {
-  constructor({ paths, getConfig, spawnProcess = spawn, resolveExecutable = resolveCodex, childEnv = codexChildEnv }) {
+  constructor({ paths, getConfig, spawnProcess = spawn, resolveExecutable = resolveCodex, childEnv = codexChildEnv,
+    discoverMcp = listConfiguredMcpServers }) {
     this.paths = paths
     this.getConfig = getConfig
     this.spawnProcess = spawnProcess
     this.resolveExecutable = resolveExecutable
     this.childEnv = childEnv
+    this.discoverMcp = discoverMcp
     this.cwd = path.join(paths.runtimeDir, 'chatcwd')
     fs.mkdirSync(this.cwd, { recursive: true })
   }
@@ -195,7 +201,9 @@ export class CodexExecAdapter {
       })
     }
     const spawnTarget = codexSpawnTarget(exe)
-    const env = await this.childEnv()
+    const env = companionEnvironment(await this.childEnv())
+    signal?.throwIfAborted()
+    const mcpServers = await this.discoverMcp(spawnTarget, { cwd: this.cwd, env, signal })
     signal?.throwIfAborted()
 
     const prompt = renderPrompt({ system, history, user })
@@ -211,7 +219,7 @@ export class CodexExecAdapter {
       image: Boolean(image),
       env,
     })
-    const args = codexExecArgs({ cwd: this.cwd, outFile, model: cfgModel, imageFile })
+    const args = codexExecArgs({ cwd: this.cwd, outFile, model: cfgModel, imageFile, mcpServers })
 
     const reportStatus = (phase) => { try { onStatus?.(phase) } catch { /* UI progress is best-effort */ } }
     let streamedText = ''
@@ -222,6 +230,7 @@ export class CodexExecAdapter {
       if (imageFile) fs.writeFileSync(imageFile, image.bytes, { mode: 0o600, flag: 'wx' })
       text = await new Promise((resolve, reject) => {
       const child = this.spawnProcess(spawnTarget.cmd, [...spawnTarget.argsPrefix, ...args], {
+        cwd: this.cwd,
         windowsHide: true,
         stdio: ['pipe', 'pipe', 'pipe'],
         env,
@@ -418,6 +427,12 @@ export class OpenAiCompatAdapter {
     const baseUrl = this.secretStore?.get('openaiBaseUrl') || 'https://api.deepseek.com/v1'
     const model = this.getConfig?.()?.chat?.model || 'deepseek-chat'
     const url = baseUrl.replace(/\/+$/, '') + '/chat/completions'
+    const endpoint = new URL(url)
+    if (endpoint.username || endpoint.password || endpoint.search || endpoint.hash ||
+        (endpoint.protocol !== 'https:' && !(endpoint.protocol === 'http:' &&
+          ['127.0.0.1', 'localhost', '[::1]'].includes(endpoint.hostname)))) {
+      throw new AmadeusError(ErrorCode.INVALID_ARGUMENT, '模型 API 必须使用 HTTPS 或本机 HTTP 地址，不能包含凭据、查询参数或片段')
+    }
 
     const messages = [{ role: 'system', content: system }]
     for (const m of history) {
@@ -439,7 +454,9 @@ export class OpenAiCompatAdapter {
     const requestSignal = signal ? AbortSignal.any([signal, deadline]) : deadline
     reportStatus('connecting')
     try {
-    const res = await fetch(url, {
+    const transport = endpoint.protocol === 'http:' ? fetchLoopback : fetch
+    const res = await transport(url, {
+      redirect: 'error',
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -450,10 +467,9 @@ export class OpenAiCompatAdapter {
       signal: requestSignal,
     })
     if (!res.ok || !res.body) {
-      const detail = await res.text().catch(() => '')
       throw new AmadeusError(
         ErrorCode.UNAVAILABLE,
-        `llm http ${res.status} ${detail.slice(0, 200)}`,
+        `llm http ${res.status}`,
       )
     }
     reportStatus('generating')

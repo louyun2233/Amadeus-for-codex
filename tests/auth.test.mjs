@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import { createAuth, isLoopback } from '../src/host/auth.mjs'
 
 function req({ address = '127.0.0.1', headers = {} } = {}) {
-  return { socket: { remoteAddress: address }, headers }
+  return { socket: { remoteAddress: address, localPort: 1 }, headers: {host:'127.0.0.1:1', ...headers} }
 }
 
 const url = (u) => new URL(u, 'http://127.0.0.1:1')
@@ -36,15 +36,23 @@ test('non-loopback is forbidden even with a token', () => {
   assert.equal(result.status, 403)
 })
 
-test('query token exchanges for a session cookie and then authenticates', () => {
+test('query token cannot authenticate or exchange a cookie', () => {
   const auth = createAuth('secret-token')
   const exchanged = auth.check(req(), url('/amadeus/panel/index.html?token=secret-token'))
-  assert.equal(exchanged.ok, true)
-  assert.equal(exchanged.kind, 'token-exchange')
-  const cookie = `amadeus_session=${exchanged.sessionId}`
-  const withCookie = auth.check(req({ headers: { cookie } }), url('/amadeus/status'))
-  assert.equal(withCookie.ok, true)
-  assert.equal(withCookie.kind, 'cookie')
+  assert.equal(exchanged.status, 401)
+  assert.equal(exchanged.sessionId, undefined)
+})
+
+test('browser origins and rebinding hosts fail even with the bearer', () => {
+  const auth=createAuth('secret-token')
+  for(const headers of [
+    {host:'attacker.example:1'}, {host:'127.0.0.1:2'}, {host:['127.0.0.1:1', 'attacker.example'].join('@')},
+    {origin:'https://attacker.example'}, {origin:'null'}, {'sec-fetch-site':'cross-site'},
+  ]) {
+    assert.equal(auth.check(req({headers:{authorization:'Bearer secret-token',...headers}}),url('/x')).status,403)
+  }
+  assert.equal(isLoopback(req({address:''})),false)
+  assert.equal(auth.check(req({headers:{authorization:'Bearer secret-token'}}),url('/x?token=secret-token')).ok,false)
 })
 
 test('unknown cookie session is rejected', () => {

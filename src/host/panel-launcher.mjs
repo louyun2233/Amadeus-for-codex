@@ -1,4 +1,5 @@
 import fs from 'node:fs'
+import { fetchLoopback } from '../shared/loopback-http.mjs'
 import path from 'node:path'
 import { spawn } from 'node:child_process'
 import { fileURLToPath } from 'node:url'
@@ -46,7 +47,7 @@ function noteLaunch(paths) {
 export async function panelIsOpen(info) {
   if (!info) return false
   try {
-    const res = await fetch(`http://127.0.0.1:${info.port}/amadeus/status`, {
+    const res = await fetchLoopback(`http://127.0.0.1:${info.port}/amadeus/status`, {
       headers: { Authorization: `Bearer ${info.token}` },
       signal: AbortSignal.timeout(4000),
     })
@@ -61,7 +62,7 @@ export async function panelIsOpen(info) {
 export async function panelAnswers(info) {
   if (!info) return false
   try {
-    const res = await fetch(`http://127.0.0.1:${info.port}/amadeus/health`, {
+    const res = await fetchLoopback(`http://127.0.0.1:${info.port}/amadeus/health`, {
       headers: { Authorization: `Bearer ${info.token}` },
       signal: AbortSignal.timeout(4000),
     })

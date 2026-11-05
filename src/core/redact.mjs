@@ -92,6 +92,8 @@ export function redactText(input) {
     .replace(/~[\\/][^\s"'<>]*/g, '[path]')
     .replace(/\bBearer\s+[A-Za-z0-9._~+/=-]{8,}/gi, 'Bearer [redacted]')
     .replace(/\b(sk|pk)-[A-Za-z0-9_-]{8,}/g, '[credential]')
+    .replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{30,})\b/g, '[credential]')
+    .replace(/\b(?:LTAI[A-Za-z0-9]{12,}|(?:AKIA|ASIA)[A-Z0-9]{16}|AIza[0-9A-Za-z_-]{30,}|xox[baprs]-[A-Za-z0-9-]{20,})\b/g, '[credential]')
     .replace(
       /\b(?:access[_-]?token|refresh[_-]?token|api[_-]?key|apikey|token|secret|password|cookie|authorization)\b\s*[:=]\s*[^\s,;"']+/gi,
       '[credential]',

@@ -63,7 +63,6 @@
     "src/host/daemon.mjs",
     "src/host/chat-routes.mjs",
     "src/host/memory-routes.mjs",
-    "src/host/voice-routes.mjs",
     "src/core/local-qwen-service.mjs",
     "src/core/task-lines.mjs",
     "src/core/character.mjs",

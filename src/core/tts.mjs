@@ -1,3 +1,4 @@
+import { fetchLoopback } from '../shared/loopback-http.mjs'
 import fs from 'node:fs'
 import path from 'node:path'
 import crypto from 'node:crypto'
@@ -166,6 +167,7 @@ export class TtsService {
     localQwenReady = ensureLocalQwen,
     localQwenWaitMs = LOCAL_QWEN_WAIT_MS,
     localQwenRetryMs = LOCAL_QWEN_RETRY_MS,
+    localFetch = fetchLoopback,
   }) {
     this.paths = paths
     this.config = config
@@ -175,6 +177,7 @@ export class TtsService {
     this.localQwenReady = localQwenReady
     this.localQwenWaitMs = localQwenWaitMs
     this.localQwenRetryMs = localQwenRetryMs
+    this.localFetch = localFetch
     this.inflight = new Map()
     fs.mkdirSync(paths.voiceCacheDir, { recursive: true })
   }
@@ -405,6 +408,7 @@ export class TtsService {
     const model = this.config.getPath('voice.dashscopeModel') || 'qwen3-tts-flash'
     const task = (async () => {
       const res = await fetch(DASHSCOPE_URL, {
+        redirect: 'error',
         method: 'POST',
         headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${key}` },
         body: JSON.stringify({
@@ -430,7 +434,7 @@ export class TtsService {
       if (!url) {
         throw new AmadeusError(ErrorCode.UNAVAILABLE, 'dashscope returned no audio url')
       }
-      const audioRes = await fetch(url, { signal: AbortSignal.timeout(30000) })
+      const audioRes = await fetch(url, { redirect: 'error', signal: AbortSignal.timeout(30000) })
       if (!audioRes.ok) {
         throw new AmadeusError(
           ErrorCode.UNAVAILABLE,
@@ -512,7 +516,7 @@ export class TtsService {
       }
       let res
       try {
-        res = await fetch(LOCAL_QWEN_URL, {
+        res = await this.localFetch(LOCAL_QWEN_URL, {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({

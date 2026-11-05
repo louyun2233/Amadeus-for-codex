@@ -30,8 +30,7 @@
   },
   "speechInput": {
     "provider": "windows-native",
-    "lang": "zh-CN",
-    "apiModel": "whisper-1"
+    "lang": "zh-CN"
   },
   "memory": {
     "enabled": false,

@@ -3,7 +3,7 @@ import assert from 'node:assert/strict'
 import fs from 'node:fs'
 import os from 'node:os'
 import path from 'node:path'
-import { ensureIncomingRing, mediaEffectPath, contentTypeFor, ringCandidates } from '../src/core/sounds.mjs'
+import { ensureIncomingRing, contentTypeFor, ringCandidates } from '../src/core/sounds.mjs'
 import { tempPaths, cleanup } from './helpers.mjs'
 
 /**
@@ -102,21 +102,4 @@ test('the content type follows the file, and the candidates are absolute', () =>
   assert.ok(candidates.length > 0)
   assert.ok(candidates.every((c) => path.isAbsolute(c)))
   assert.ok(candidates[0].includes(path.join('Media', 'Windows Notify Email.wav')))
-})
-
-test('legacy media effects cannot play an un-cloned voice clip', () => {
-  const paths = tempPaths()
-  try {
-    const dir = path.join(paths.dataRoot, 'sounds', 'kurisu-media')
-    fs.mkdirSync(dir, { recursive: true })
-    const file = path.join(dir, '默认响声.WAV')
-    fs.writeFileSync(file, Buffer.alloc(5000, 7))
-    assert.equal(mediaEffectPath(paths, 'tap_body_0'), null)
-    assert.equal(mediaEffectPath(paths, 'tap_body_1'), null)
-    assert.equal(mediaEffectPath(paths, 'broadcast'), null)
-    assert.equal(mediaEffectPath(paths, '../config.json'), null)
-    assert.equal(mediaEffectPath(paths, 'constructor'), null)
-  } finally {
-    cleanup(paths)
-  }
 })

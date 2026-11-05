@@ -34,7 +34,7 @@ export function sha256File(file) {
  * HTTP unless the host is loopback. Callers can never pass a URL — the API
  * takes a pack id — so this closes the SSRF path entirely.
  */
-export function assertAllowedUrl(rawUrl, allowedHosts) {
+export function assertAllowedUrl(rawUrl) {
   let url
   try {
     url = new URL(rawUrl)
@@ -43,6 +43,7 @@ export function assertAllowedUrl(rawUrl, allowedHosts) {
   }
   const host = url.hostname.toLowerCase()
   const isLoopback = host === '127.0.0.1' || host === 'localhost' || host === '::1'
+  if (url.username || url.password) throw new AmadeusError(ErrorCode.INVALID_ARGUMENT, 'asset source cannot contain credentials')
   if (url.protocol === 'https:') return url
   if (url.protocol === 'http:' && isLoopback) return url
   throw new AmadeusError(
@@ -53,7 +54,6 @@ export function assertAllowedUrl(rawUrl, allowedHosts) {
 
 function extFor(format) {
   if (format === 'tar.gz' || format === 'tgz') return '.tar.gz'
-  if (format === 'js') return '.js'
   return '.bin'
 }
 
@@ -83,6 +83,9 @@ export class AssetManager {
     if (!data || !Array.isArray(data.packs)) {
       throw new AmadeusError(ErrorCode.INTERNAL, `asset registry is missing or malformed: ${this.registryFile}`)
     }
+    if (data.packs.some(p => p.kind !== 'model' || !safePackSegment(p.id) || !safePackSegment(p.version))) {
+      throw new AmadeusError(ErrorCode.INVALID_ARGUMENT, 'asset registry must contain native model packs with safe identifiers')
+    }
     this._registry = data
     return data
   }
@@ -105,10 +108,6 @@ export class AssetManager {
 
   versionDir(character, version) {
     return path.join(this.characterDir(character), 'versions', version)
-  }
-
-  runtimeDir(engine) {
-    return path.join(this.paths.runtimeCacheDir, engine)
   }
 
   #progress(packId, payload) {
@@ -145,69 +144,12 @@ export class AssetManager {
     }
   }
 
-  runtimeStatus(pack) {
-    const file = path.join(this.runtimeDir(pack.engine), pack.target)
-    const installed = fs.existsSync(file)
-    let actual = null
-    if (installed) {
-      try {
-        actual = sha256File(file)
-      } catch {
-        actual = null
-      }
-    }
-    return {
-      id: pack.id,
-      kind: pack.kind,
-      engine: pack.engine,
-      installed,
-      path: file,
-      targetName: pack.target,
-      expectedSha256: pack.sha256,
-      actualSha256: actual,
-      matches: installed && actual === pack.sha256,
-    }
-  }
-
   status() {
-    const packs = this.registry().packs.map((p) =>
-      p.kind === 'model' ? this.modelStatus(p) : this.runtimeStatus(p),
-    )
+    const packs = this.registry().packs.map(p => this.modelStatus(p))
     const character = this.config?.getPath('character') || null
-    const model = packs.find((p) => p.kind === 'model' && (!character || p.character === character))
-    const runtime = packs.find((p) => p.kind === 'runtime' && p.engine === model?.engine)
-    return {
-      ok: true,
-      packs,
-      activeModel: model || null,
-      activeRuntime: runtime || null,
-      ready: Boolean(model?.installed && (!runtime || (runtime.installed && runtime.matches))),
-      degrade: model?.installed
-        ? !runtime || runtime?.installed
-          ? null
-          : 'missing-cubism2-runtime'
-        : 'missing-model',
-    }
-  }
-
-  /** Resolve a request path like `current/avatar.model.json` for the active character. */
-  resolveCurrent(rel, character = this.config?.getPath('character') || 'kurisu') {
-    const manifest = readJson(this.manifestFile(character), null)
-    if (!manifest?.current) return null
-    const base = this.versionDir(character, manifest.current)
-    const target = path.resolve(base, rel)
-    if (target !== base && !target.startsWith(base + path.sep)) return null
-    return fs.existsSync(target) ? target : null
-  }
-
-  resolveRuntime(rel) {
-    const character = this.config?.getPath('character') || null
-    const model = this.registry().packs.find((p) => p.kind === 'model' && (!character || p.character === character))
-    const pack = this.registry().packs.find((p) => p.kind === 'runtime' && p.engine === model?.engine)
-    if (!pack) return null
-    if (path.basename(rel) !== pack.target) return null
-    const file = path.join(this.runtimeDir(pack.engine), pack.target)
-    return fs.existsSync(file) ? file : null
+    const model = packs.find(p => !character || p.character === character)
+    return { ok: true, packs, activeModel: model || null,
+      ready: Boolean(model?.installed), degrade: model?.installed ? null : 'missing-model' }
   }
 
   // ---------------------------------------------------------------- download
@@ -232,7 +174,7 @@ export class AssetManager {
     for (const source of pack.sources) {
       let url
       try {
-        url = assertAllowedUrl(source, pack.sources)
+        url = assertAllowedUrl(source)
       } catch (e) {
         attempts.push({ source, error: e.message })
         continue
@@ -279,7 +221,7 @@ export class AssetManager {
       }
     }
     const headers = start > 0 ? { Range: `bytes=${start}-` } : {}
-    const res = await fetch(url, { headers, redirect: 'follow' })
+    const res = await fetch(url, { headers, redirect: 'error', signal: AbortSignal.timeout(120000) })
     if (!res.ok && res.status !== 206) {
       throw new Error(`http ${res.status}`)
     }
@@ -328,7 +270,7 @@ export class AssetManager {
   async install(packId, options = {}) {
     const pack = this.pack(packId)
     if (this._installing.has(pack.id)) return this._installing.get(pack.id)
-    const task = (pack.kind === 'model' ? this.#installModel(pack, options) : this.#installRuntime(pack, options))
+    const task = this.#installModel(pack, options)
       .finally(() => this._installing.delete(pack.id))
     this._installing.set(pack.id, task)
     return task
@@ -403,30 +345,6 @@ export class AssetManager {
     return { ok: true, ...this.modelStatus(pack) }
   }
 
-  async #installRuntime(pack, { force = false } = {}) {
-    this.#progress(pack.id, { phase: 'start' })
-    const file = await this.download(pack.id, { force })
-    const actual = sha256File(file)
-    if (actual !== pack.sha256) {
-      throw new AmadeusError(ErrorCode.UNAVAILABLE, `checksum mismatch for ${pack.id}`)
-    }
-    const dir = this.runtimeDir(pack.engine)
-    fs.mkdirSync(dir, { recursive: true })
-    const target = path.join(dir, pack.target)
-    const staging = `${target}.staging-${process.pid}`
-    fs.copyFileSync(file, staging)
-    fs.renameSync(staging, target)
-    writeJsonAtomic(path.join(dir, 'manifest.json'), {
-      version: pack.version,
-      sha256: pack.sha256,
-      installedAt: Date.now(),
-      licenseNote: pack.licenseNote,
-    })
-    this.audit?.record({ source: 'assets', tool: 'assets.install', summary: pack.id })
-    this.#progress(pack.id, { phase: 'done' })
-    return { ok: true, ...this.runtimeStatus(pack) }
-  }
-
   /** Install from a file the user already has (offline / self-supplied). */
   async installFromFile(packId, localFile) {
     const pack = this.pack(packId)
@@ -449,14 +367,8 @@ export class AssetManager {
     const status = this.status()
     const problems = []
     for (const pack of status.packs) {
-      if (pack.kind === 'runtime') {
-        if (!pack.installed) problems.push({ id: pack.id, reason: 'not installed' })
-        else if (!pack.matches) {
-          problems.push({ id: pack.id, reason: `sha256 mismatch (${pack.actualSha256})` })
-        }
-      } else if (!pack.installed) {
-        problems.push({ id: pack.id, reason: 'not installed' })
-      } else {
+      if (!pack.installed) {
+        problems.push({ id: pack.id, reason: 'not installed' })      } else {
         try {
           const model = JSON.parse(fs.readFileSync(path.join(this.versionDir(pack.character, pack.version), pack.entryName), 'utf8'))
           if (!model.model || !Array.isArray(model.textures)) {

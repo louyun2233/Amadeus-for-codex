@@ -20,21 +20,6 @@ export const RING_EXTENSIONS = ['.wav', '.mp3', '.ogg', '.m4a']
 export const MIN_RING_BYTES = 4 * 1024
 export const MAX_RING_BYTES = 8 * 1024 * 1024
 
-/** Only the call ring is enabled; legacy media requests cannot play speech clips. */
-export const MEDIA_EFFECT_FILES = {}
-
-export function mediaEffectPath(paths, event) {
-  const name = Object.hasOwn(MEDIA_EFFECT_FILES, event) ? MEDIA_EFFECT_FILES[event] : null
-  if (!name) return null
-  const file = path.join(paths.dataRoot, 'sounds', 'kurisu-media', name)
-  try {
-    const stat = fs.statSync(file)
-    return stat.isFile() && stat.size >= MIN_RING_BYTES && stat.size <= MAX_RING_BYTES ? file : null
-  } catch {
-    return null
-  }
-}
-
 /** A ring the user dropped in by hand, if any. */
 export function userRingPath(dir) {
   for (const ext of RING_EXTENSIONS) {

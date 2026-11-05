@@ -6,7 +6,7 @@ import { SecretStore } from '../src/core/secrets.mjs'
 import { AuditLog } from '../src/core/audit.mjs'
 import { SessionStore } from '../src/core/sessions.mjs'
 import { MemoryStore } from '../src/core/memory.mjs'
-import { VoiceLibrary, DEFAULT_VOICE } from '../src/core/voices.mjs'
+import { VoiceLibrary } from '../src/core/voices.mjs'
 import { EventHub } from '../src/host/events.mjs'
 import { tempPaths, cleanup } from './helpers.mjs'
 
@@ -79,42 +79,12 @@ test('memory routes preserve add, provenance, export, forget, clear and delete',
   })
 })
 
-test('voice routes preserve import, selection reset and validation', async () => {
+test('obsolete voice administration endpoints cannot change the selected voice', async () => {
   await withServer(async ({ request, config }) => {
-    const initial = await request('GET', '/amadeus/voices')
-    assert.equal(initial.status, 200)
-    assert.equal(initial.body.default.id, DEFAULT_VOICE.id)
-    assert.deepEqual(initial.body.custom, [])
-
-    const invalid = await request('POST', '/amadeus/voices/import', { id: 'bad' })
-    assert.equal(invalid.status, 400)
-    const voiceId = 'ja-JP-MayuNeural'
-    const imported = await request('POST', '/amadeus/voices/import', { id: voiceId, label: '麻友' })
-    assert.equal(imported.status, 200)
-    assert.equal(imported.body.voice.id, voiceId)
-    config.update({ voice: { provider: 'edge', name: voiceId } })
-    const removed = await request('POST', '/amadeus/voices/remove', { id: voiceId })
-    assert.equal(removed.body.removed, 1)
-    assert.equal(config.getPath('voice.name'), DEFAULT_VOICE.id)
-    assert.deepEqual((await request('GET', '/amadeus/voices')).body.custom, [])
-  })
-})
-
-test('an existing cloud clone ID can be imported without uploading its sample', async () => {
-  await withServer(async ({ request, config }) => {
-    config.update({ voice: { provider: 'dashscope', name: 'qwen_clone_123' } })
-    const imported = await request('POST', '/amadeus/voices/import', {
-      id: 'qwen_clone_123', label: '红莉栖', provider: 'dashscope',
-    })
-    assert.equal(imported.status, 200)
-    assert.equal(imported.body.voice.provider, 'dashscope')
-    const catalog = await request('GET', '/amadeus/voices')
-    assert.equal(catalog.body.default.id, DEFAULT_VOICE.id)
-    assert.equal(catalog.body.custom[0].id, 'qwen_clone_123')
-    assert.equal(catalog.body.aliyunReady, false)
-    const removed = await request('POST', '/amadeus/voices/remove', { id: 'qwen_clone_123' })
-    assert.equal(removed.body.removed, 1)
-    assert.equal(config.getPath('voice.name'), 'Cherry')
-    assert.equal(config.getPath('voice.dashscopeModel'), 'qwen3-tts-flash')
+    const before = JSON.stringify(config.get().voice)
+    for (const [method, route] of [['GET', '/amadeus/voices'], ['POST', '/amadeus/voices/import'], ['POST', '/amadeus/voices/remove']]) {
+      assert.equal((await request(method, route, method === 'GET' ? undefined : { id: 'unrequested-speaker' })).status, 404)
+    }
+    assert.equal(JSON.stringify(config.get().voice), before)
   })
 })
