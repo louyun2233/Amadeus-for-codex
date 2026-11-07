@@ -138,7 +138,7 @@ class MediaTests(unittest.TestCase):
     def test_music_stays_quiet_and_ducks_for_speech_and_calls(self):
         volumes = []
         controller = SimpleNamespace(library=SimpleNamespace(state={'volume': 12}),
-                                     speaking=False, calling=False,
+                                     speaking=False, calling=False, listening=False,
                                      output=SimpleNamespace(setVolume=volumes.append))
         BackgroundMusic.update_volume(controller)
         controller.speaking = True
@@ -147,6 +147,12 @@ class MediaTests(unittest.TestCase):
         BackgroundMusic.update_volume(controller)
         self.assertEqual(volumes, [.12, .03, 0])
         controller.calling = controller.speaking = False
+        controller.listening = True
+        BackgroundMusic.update_volume(controller)
+        controller.listening = False
+        BackgroundMusic.update_volume(controller)
+        self.assertEqual(volumes[-2:], [0, .12])
+        self.assertEqual(controller.library.state['volume'], 12)
         controller.library.state['volume'] = 200
         BackgroundMusic.update_volume(controller)
         self.assertEqual(volumes[-1], .3)

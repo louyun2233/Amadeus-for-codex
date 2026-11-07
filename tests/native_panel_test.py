@@ -13,7 +13,7 @@ os.environ.setdefault("QT_QPA_PLATFORM", "offscreen")
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "native"))
 from PySide6.QtCore import Signal, QPoint, QPointF, Qt
 from PySide6.QtGui import QWheelEvent, QImage, QColor
-from PySide6.QtWidgets import QApplication, QWidget, QScrollArea
+from PySide6.QtWidgets import QApplication, QWidget, QScrollArea, QPushButton
 from PySide6.QtTest import QTest
 import panel as p
 
@@ -56,6 +56,123 @@ class FakeAudio:
 
 
 class NativePanelTests(unittest.TestCase):
+    def prepare_call_opening(self, text='opening', cn='接听测试开场白'):
+        w = self.window
+        w.config = {'voice': {'enabled': True, 'provider': 'qwen-local',
+                              'name': 'original-clone', 'ringEnabled': False}}
+        w.pool.shutdown(wait=False)
+        self.control_jobs, self.opening_jobs, self.requests = [], [], []
+        w.pool = SimpleNamespace(submit=lambda fn, *args: self.control_jobs.append(lambda: fn(*args)),
+                                 shutdown=lambda **kwargs: None)
+        def request(path, **kwargs):
+            query = p.urllib.parse.parse_qs(p.urllib.parse.urlparse(path).query)
+            self.requests.append(query['text'][0])
+            return b'synthetic opening audio' * 20, 'audio/wav'
+        w.api.request = request
+        w._utterance({'id': 'incoming-one', 'kind': 'call', 'text': text, 'cn': cn, 'emotion': 'soft'})
+
+    def opening_thread(self, **kwargs):
+        self.assertTrue(kwargs['daemon'])
+        self.assertEqual(kwargs['name'], 'call-greeting')
+        return SimpleNamespace(start=lambda: self.opening_jobs.append(kwargs['target']))
+
+    def click_connect(self):
+        button = next(button for button in self.window.call_screen.findChildren(QPushButton)
+                      if button.text() == 'CONNECT')
+        QTest.mouseClick(button, Qt.MouseButton.LeftButton)
+
+    def test_call_defers_other_speech_until_connect_and_prioritises_the_opening(self):
+        self.prepare_call_opening()
+        w = self.window
+        w._utterance({'id': 'during-ring', 'kind': 'broadcast', 'text': 'later task announcement',
+                      'ts': time.time() * 1000})
+        self.assertIsNone(w.active_audio_item, 'ringing cannot start unrelated speech')
+        self.assertFalse(w.audio_busy)
+        with patch.object(p.threading, 'Thread', side_effect=self.opening_thread):
+            self.click_connect()
+        self.assertEqual(w.active_audio_item['text'], 'opening')
+        self.assertEqual([item['text'] for item in w.audio_queue], ['later task announcement'])
+        self.assertEqual(self.control_jobs, [], 'call synthesis cannot wait in the control request pool')
+        self.opening_jobs[0]()
+        self.assertEqual(self.requests, ['opening'])
+        self.assertEqual(w.audio.played[0][0][0], 'voice')
+
+    def test_call_opening_shows_text_and_playback_state_without_starting_the_microphone(self):
+        self.prepare_call_opening()
+        w = self.window
+        w.tabs.setCurrentIndex(2)
+        before = dict(w.config['voice'])
+        with patch.object(p.threading, 'Thread', side_effect=self.opening_thread):
+            self.click_connect()
+        self.assertFalse(w.call_mode)
+        self.assertIsNone(w.call_item)
+        self.assertEqual(w.tabs.currentIndex(), 0)
+        self.assertTrue(w.user_started_chat)
+        self.assertIn('正在准备开场白', w.status.full_text)
+        self.assertTrue(any('接听测试开场白' in entry.toPlainText()
+                            for entry in w.history.findChildren(p.MessageText)))
+        w._on_result('sessions', {'sessions': []})
+        self.assertTrue(any('接听测试开场白' in entry.toPlainText()
+                            for entry in w.history.findChildren(p.MessageText)))
+        self.opening_jobs[0]()
+        item = w.active_audio_item
+        w._on_audio_started(item)
+        self.assertIn('正在播放开场白', w.status.full_text)
+        w._on_audio_done(item, '')
+        self.assertIn('可以回复', w.status.full_text)
+        self.assertFalse(w.voice_dialogue.active)
+        self.assertIsNone(w.voice_dialogue.capture)
+        self.assertEqual(w.config['voice'], before)
+
+    def test_call_opening_failure_is_visible_in_the_conversation(self):
+        self.prepare_call_opening()
+        w = self.window
+        with patch.object(p.threading, 'Thread', side_effect=self.opening_thread):
+            self.click_connect()
+        def fail(*args, **kwargs):
+            raise RuntimeError('synthetic opening failure')
+        w.api.request = fail
+        self.opening_jobs[0]()
+        self.assertIn('来电开场白播放失败', w.status.full_text)
+        self.assertTrue(any('来电开场白播放失败' in entry.toPlainText()
+                            for entry in w.history.findChildren(p.MessageText)))
+        self.assertFalse(w.audio_busy)
+
+    def test_double_connect_does_not_repeat_or_cancel_the_accepted_opening(self):
+        self.prepare_call_opening()
+        with patch.object(p.threading, 'Thread', side_effect=self.opening_thread):
+            self.click_connect()
+            current = self.window.active_audio_item
+            generation = self.window.audio_generation
+            self.click_connect()
+        self.assertEqual(len(self.opening_jobs), 1)
+        self.assertIs(self.window.active_audio_item, current)
+        self.assertEqual(self.window.audio_generation, generation)
+
+    def test_declining_a_call_never_speaks_its_opening_and_releases_deferred_audio(self):
+        self.prepare_call_opening()
+        w = self.window
+        w._utterance({'id': 'deferred', 'kind': 'say', 'text': 'deferred reply'})
+        self.assertIsNone(w.active_audio_item)
+        w.deny_call()
+        self.assertEqual(w.active_audio_item['text'], 'deferred reply')
+        self.control_jobs[0]()
+        self.assertEqual(self.requests, ['deferred reply'])
+
+    def test_a_late_worker_from_a_previous_call_cannot_play_after_another_call_arrives(self):
+        self.prepare_call_opening()
+        w = self.window
+        with patch.object(p.threading, 'Thread', side_effect=self.opening_thread):
+            self.click_connect()
+            old = self.opening_jobs[0]
+            w._utterance({'id': 'incoming-two', 'kind': 'call', 'text': 'second opening', 'cn': '第二次接听'})
+            old()
+            self.assertEqual(self.requests, [])
+            self.assertEqual(w.audio.played, [])
+            self.click_connect()
+        self.opening_jobs[1]()
+        self.assertEqual(self.requests, ['second opening'])
+
     def test_all_three_media_selectors_accept_real_mouse_and_keyboard_input(self):
         from media import MediaLibrary
         w = self.window

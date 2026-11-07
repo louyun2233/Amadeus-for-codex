@@ -114,11 +114,25 @@ export class ChatEngine extends EventEmitter {
     return true
   }
 
+  /** End an explicitly started voice conversation without changing text-chat defaults. */
+  endVoiceSession(sessionId) {
+    const session = this.sessions.get(sessionId)
+    if (session.mode !== 'voice') throw new Error('not a voice session')
+    for (const turn of this.turns.values()) {
+      if (turn.sessionId === sessionId) this.cancelTurn(turn.id)
+    }
+    if (!session.endedAt) this.sessions.close(sessionId)
+    const pending = this.sessionQueues.get(sessionId) || Promise.resolve()
+    pending.catch(() => {}).then(() => this.#maintain(sessionId, { closed: true }))
+      .catch(() => logger.warn('voice conversation memory maintenance failed'))
+    return { closed: true }
+  }
+
   /**
    * Run one turn. Returns immediately with a turnId; progress is delivered
    * through the emitted events so the HTTP layer can stream to the panel.
    */
-  startTurn({ sessionId, userText, image = null, workspace = null, origin = null }) {
+  startTurn({ sessionId, userText, image = null, workspace = null, origin = null, requestId = null }) {
     const turnId = `t${++this.turnSeq}-${Date.now().toString(36)}`
     // `origin` is the panel client that started the turn, so streaming deltas go
     // back to that tab only instead of every open tab.
@@ -126,6 +140,8 @@ export class ChatEngine extends EventEmitter {
       id: turnId, sessionId, status: 'queued', text: '', error: null, closed: false,
       phase: 'queued', startedAt: Date.now(), firstDeltaAt: null,
       durationMs: null, origin, controller: new AbortController(),
+      mode: this.sessions.get(sessionId).mode || 'chat',
+      requestId,
     }
     this.turns.set(turnId, turn)
     this.#pruneTurns()
@@ -146,7 +162,7 @@ export class ChatEngine extends EventEmitter {
       const reason = typeof candidate === 'string' && /^[a-z0-9-]{1,40}$/.test(candidate)
         ? candidate : 'chat-failed'
       let closed = false
-      if (this.config.getPath('chat.oneshot') === true) {
+      if (this.config.getPath('chat.oneshot') === true || turn.mode === 'voice') {
         try {
           this.sessions.close(sessionId)
           closed = true
@@ -188,7 +204,7 @@ export class ChatEngine extends EventEmitter {
     // Two switches decide how much she remembers, and both default to the
     // "stranger" end: no memory, and no context carried across turns.
     const memoryOn = this.config.getPath('memory.enabled') === true
-    const oneshot = this.config.getPath('chat.oneshot') === true
+    const oneshot = this.config.getPath('chat.oneshot') === true && turn.mode !== 'voice'
     const recalled = memoryOn
       ? this.memory.search(text, { k: this.#maxMemories(), namespace: 'panel', types: ['fact', 'emotion', 'summary'] })
       : []
@@ -204,7 +220,10 @@ export class ChatEngine extends EventEmitter {
       memories: recalled,
       recap,
       summary: session.summary || '',
-    })
+      hasImage: Boolean(image),
+    }) + (turn.mode === 'voice'
+      ? '\n当前是连续语音对话。结合这通对话的上文，先回应用户刚说的话；每次回答保持适合朗读的简短自然口语，不用 Markdown 排版，不把自己的回复当作用户发言。听写有歧义时先简短确认，不能猜造用户意思。继续遵守上述角色与双语输出格式。'
+      : '')
 
     const history = oneshot ? [] : toHistory(this.sessions.recentMessages(sessionId, 20))
 
@@ -217,7 +236,7 @@ export class ChatEngine extends EventEmitter {
     const res = await adapter.chat({
       system,
       history,
-      user: image && text === '[图片]' ? '请描述这张图片的内容。' : text,
+      user: image && text === '[图片]' ? '请看这张图片。' : text,
       image,
       signal: turn.controller.signal,
       onStatus: (phase) => {
@@ -261,7 +280,8 @@ export class ChatEngine extends EventEmitter {
       }
     }
     turn.closed = closed
-    this.emit('turn:done', { turnId: turn.id, sessionId, origin, closed, ...parsed })
+    this.emit('turn:done', { turnId: turn.id, sessionId, origin, closed, mode: turn.mode,
+      voiceRequestId: turn.requestId, ...parsed })
     const firstMs = turn.firstDeltaAt === null ? 'none' : `${turn.firstDeltaAt - turn.startedAt}ms`
     this.audit?.record({ source: 'chat', tool: 'turn.done', summary: `${turn.id} ${turn.durationMs}ms first=${firstMs}` })
 

@@ -49,6 +49,7 @@
     "scripts/Amadeus.ico",
     "scripts/install-native.ps1",
     "native/panel.py",
+    "native/voice_dialogue.py",
     "native/affect.py",
     "native/tracking.py",
     "native/reaction_audio.py",

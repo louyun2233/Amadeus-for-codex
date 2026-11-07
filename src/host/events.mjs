@@ -14,6 +14,7 @@ export const MAX_PENDING_SPEECH_CHARS = 64000
  * brief reconnect, but keeps an old task line from playing after the next boot.
  */
 export const ANNOUNCEMENT_MAX_AGE_MS = 60 * 1000
+export const VOICE_RECONNECT_MAX_AGE_MS = 2 * 60 * 1000
 
 /**
  * Server->panel event stream over SSE, plus an utterance queue with explicit
@@ -57,7 +58,8 @@ export class EventHub extends EventEmitter {
     if (previous && previous.res !== res) previous.res.end?.()
     if (this.audioOwner === null) this.audioOwner = id
     const owns = this.audioOwner === id
-    const pending = owns ? this.utterances.map((u) => u.payload) : []
+    const deliverable = this.utterances.filter(u => u.payload.targetClient ? u.payload.targetClient === id : owns)
+    const pending = deliverable.map(u => u.payload)
     if (this.#send(res, 'hello', {
       clientId: id,
       audioOwner: this.audioOwner,
@@ -67,7 +69,7 @@ export class EventHub extends EventEmitter {
       pending,
       serverTime: Date.now(),
     })) {
-      if (owns) for (const item of this.utterances) this.#markDelivered(item)
+      for (const item of deliverable) this.#markDelivered(item)
     }
     return () => {
       // A stale EventSource close must not remove its replacement connection.
@@ -112,7 +114,7 @@ export class EventHub extends EventEmitter {
     this.audioOwner = clientId
     this.broadcast('audio-owner', { owner: clientId })
     const client = this.clients.get(clientId)
-    this.#sendPending(client.res)
+    this.#sendPending(client.res, clientId)
     return { ok: true, owner: clientId, changed: true }
   }
 
@@ -124,12 +126,13 @@ export class EventHub extends EventEmitter {
     if (this.audioOwner === null) return
     this.broadcast('audio-owner', { owner: this.audioOwner })
     const client = this.clients.get(this.audioOwner)
-    this.#sendPending(client.res)
+    this.#sendPending(client.res, this.audioOwner)
   }
 
-  #sendPending(res) {
-    if (this.#send(res, 'pending', { pending: this.utterances.map((u) => u.payload) })) {
-      for (const item of this.utterances) this.#markDelivered(item)
+  #sendPending(res, clientId) {
+    const items = this.utterances.filter(u => !u.payload.targetClient || u.payload.targetClient === clientId)
+    if (this.#send(res, 'pending', { pending: items.map(u => u.payload) })) {
+      for (const item of items) this.#markDelivered(item)
     }
   }
 
@@ -146,9 +149,11 @@ export class EventHub extends EventEmitter {
   /** Admit an entire reply before delivery; never evict its first sentences. */
   enqueueUtterances(lines) {
     const payloads = []
-    for (const { text, cn = '', emotion = 'neutral', expr = '', kind = 'say', force = true } of lines) {
+    for (const { text, cn = '', emotion = 'neutral', expr = '', kind = 'say', force = true,
+      targetClient, replyTo, sessionId, voiceRequestId } of lines) {
       const clean = String(text ?? '').trim()
-      if (clean) payloads.push({ kind, text: clean, cn, emotion, expr, force, ts: Date.now() })
+      if (clean) payloads.push({ kind, text: clean, cn, emotion, expr, force, ts: Date.now(),
+        ...(targetClient ? { targetClient, replyTo, sessionId, voiceRequestId, mode: 'voice' } : {}) })
     }
     const chars = this.utterances.reduce((sum, item) => sum + item.payload.text.length, 0) +
       payloads.reduce((sum, payload) => sum + payload.text.length, 0)
@@ -165,8 +170,18 @@ export class EventHub extends EventEmitter {
     return items.map((item) => item.payload)
   }
 
-  /** Speech goes to the audio owner only. No owner means it stays queued. */
+  discardVoiceSession(sessionId) {
+    const before = this.utterances.length
+    this.utterances = this.utterances.filter(item => item.payload.mode !== 'voice' || item.payload.sessionId !== sessionId)
+    return before - this.utterances.length
+  }
+
+  /** Voice replies stay with their requesting client; other audio follows focus. */
   #deliverUtterance(item, retry = false) {
+    if (item.payload.targetClient) {
+      if (this.sendTo(item.payload.targetClient, 'utterance', item.payload)) this.#markDelivered(item, retry)
+      return
+    }
     if (this.audioOwner === null) return
     if (!this.sendTo(this.audioOwner, 'utterance', item.payload)) {
       // A failed response may still be in the client map until its close event.
@@ -213,7 +228,7 @@ export class EventHub extends EventEmitter {
     for (const item of [...this.utterances]) {
       // An offline queue has not been delivered and has no ACK deadline.
       if (item.lastSentAt === null) continue
-      if (this.audioOwner === null) continue
+      if (this.audioOwner === null && !item.payload.targetClient) continue
       if (now - item.lastSentAt < ACK_TIMEOUT_MS) continue
       if (item.attempts >= MAX_ATTEMPTS) {
         const idx = this.utterances.indexOf(item)
@@ -226,7 +241,8 @@ export class EventHub extends EventEmitter {
   }
 
   /**
-   * Announcements expire; conversation and calls do not.
+   * Announcements expire; disconnected private voice requests have a grace
+   * period. Ordinary conversation replies and calls remain queued.
    *
    * `kind: 'broadcast'` is the "task finished / task started" notice - news
    * that is worthless once it is old. A reply the user asked for stays queued
@@ -238,6 +254,10 @@ export class EventHub extends EventEmitter {
     for (const item of this.utterances) {
       const isAnnouncement = item.payload?.kind === 'broadcast'
       const age = now - (Number(item.payload?.ts) || now)
+      if (item.payload?.targetClient && !this.clients.has(item.payload.targetClient) && age > VOICE_RECONNECT_MAX_AGE_MS) {
+        this.#drop(item, 'voice client disconnected')
+        continue
+      }
       if (isAnnouncement && age > ANNOUNCEMENT_MAX_AGE_MS) {
         this.#drop(item, `stale announcement (${Math.round(age / 1000)}s old)`)
         continue
@@ -251,7 +271,9 @@ export class EventHub extends EventEmitter {
     if (!item) return
     this.dropped.push({ id: item.id, reason, ts: Date.now() })
     if (this.dropped.length > 50) this.dropped.shift()
-    this.broadcast('degraded', { kind: 'utterance-dropped', id: item.id, reason })
+    const payload = { kind: 'utterance-dropped', id: item.id, reason }
+    if (item.payload?.targetClient) this.sendTo(item.payload.targetClient, 'degraded', payload)
+    else this.broadcast('degraded', payload)
   }
 
   status() {

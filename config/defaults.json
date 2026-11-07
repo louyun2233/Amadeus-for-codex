@@ -30,7 +30,9 @@
   },
   "speechInput": {
     "provider": "windows-native",
-    "lang": "zh-CN"
+    "lang": "zh-CN",
+    "submitMode": "auto",
+    "sensitivity": "high"
   },
   "memory": {
     "enabled": false,

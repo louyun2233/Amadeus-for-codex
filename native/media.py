@@ -404,6 +404,7 @@ class BackgroundMusic(QObject):
         self.player.setAudioOutput(self.output)
         self.player.setLoops(QMediaPlayer.Loops.Infinite)
         self.speaking = self.calling = False
+        self.listening = False
 
     def apply(self):
         state = self.library.state
@@ -419,7 +420,7 @@ class BackgroundMusic(QObject):
 
     def update_volume(self):
         value = max(0, min(30, int(self.library.state['volume']))) / 100
-        self.output.setVolume(0 if self.calling else value * (.25 if self.speaking else 1))
+        self.output.setVolume(0 if self.calling or self.listening else value * (.25 if self.speaking else 1))
 
     def stop(self):
         self.player.stop()

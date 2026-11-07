@@ -54,6 +54,8 @@ const SCHEMA = {
   'voice.stability': (v) => (typeof v === 'boolean' ? v : undefined),
   'speechInput.provider': (v) => (v === 'none' ? 'none' : ['windows-native', 'browser', 'api'].includes(v) ? 'windows-native' : undefined),
   'speechInput.lang': (v) => (typeof v === 'string' && v.length <= 16 ? v : undefined),
+  'speechInput.submitMode': (v) => (['manual', 'auto'].includes(v) ? v : undefined),
+  'speechInput.sensitivity': (v) => (['low', 'normal', 'high'].includes(v) ? v : undefined),
   'memory.enabled': (v) => (typeof v === 'boolean' ? v : undefined),
   'memory.autoExtract': (v) => (typeof v === 'boolean' ? v : undefined),
   'memory.maxPerNamespace': NUM(10, 5000),

@@ -25,17 +25,18 @@ from windows_taskbar import set_process_identity, set_window_identity
 from affect import AffectController, BlinkCycle, EyeGesture, FaceSmoother
 from tracking import CursorTracker
 from reaction_audio import ReactionAudioCache, leading_silence_ms
+from voice_dialogue import VoiceDialogue, recognize
 from media import MediaLibrary, BackgroundMusic, model_label
 
 import live2d
 from OpenGL.GL import glViewport
 from PySide6.QtCore import QObject, QPointF, QRect, QRectF, QSize, Qt, QTimer, Signal, QSignalBlocker
-from PySide6.QtGui import QColor, QCursor, QFont, QIcon, QKeySequence, QLinearGradient, QPainter, QPen, QPixmap, QPolygonF, QShortcut, QTextOption
+from PySide6.QtGui import QColor, QCursor, QFont, QIcon, QKeySequence, QLinearGradient, QPainter, QPen, QPixmap, QPolygonF, QShortcut, QTextCursor, QTextOption
 from PySide6.QtOpenGLWidgets import QOpenGLWidget
 from PySide6.QtWidgets import (
     QApplication, QCheckBox, QComboBox, QFileDialog, QFrame, QHBoxLayout,
     QGraphicsDropShadowEffect, QInputDialog, QLabel, QLineEdit, QListView, QListWidget, QListWidgetItem, QMainWindow, QMenu, QMessageBox,
-    QPlainTextEdit, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QStackedLayout, QStackedWidget, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
+    QPlainTextEdit, QProgressBar, QPushButton, QScrollArea, QSizePolicy, QSpinBox, QStackedLayout, QStackedWidget, QTabWidget, QTextEdit, QVBoxLayout, QWidget,
 )
 
 
@@ -163,7 +164,8 @@ class Bridge(QObject):
     failed = Signal(str, str)
     event = Signal(str, object)
     audio_done = Signal(object, object)
-    speech_done = Signal(object, object)
+    speech_done = Signal(object, object, object)
+    recognition_progress = Signal(object, object)
     audio_started = Signal(object)
 
 
@@ -1315,29 +1317,6 @@ class MciAudio:
                 self.bridge.audio_done.emit(item, error)
 
 
-def recognize_once(bridge, language="zh-CN"):
-    try:
-        import clr
-        dll = Path(os.environ["WINDIR"]) / "Microsoft.NET/Framework64/v4.0.30319/WPF/System.Speech.dll"
-        clr.AddReference(str(dll))
-        from System import TimeSpan
-        from System.Speech.Recognition import DictationGrammar, SpeechRecognitionEngine
-        recognizers = [item for item in SpeechRecognitionEngine.InstalledRecognizers()
-                       if str(item.Culture).lower() == language.lower()]
-        if not recognizers:
-            raise RuntimeError(f"Windows {language} 听写引擎未安装")
-        engine = SpeechRecognitionEngine(recognizers[0])
-        try:
-            engine.LoadGrammar(DictationGrammar())
-            engine.SetInputToDefaultAudioDevice()
-            result = engine.Recognize(TimeSpan.FromSeconds(12))
-            bridge.speech_done.emit(str(result.Text) if result else "", None)
-        finally:
-            engine.Dispose()
-    except Exception as error:
-        bridge.speech_done.emit("", str(error))
-
-
 class Panel(QMainWindow):
     def __init__(self, api):
         super().__init__()
@@ -1352,6 +1331,15 @@ class Panel(QMainWindow):
         self.stop_event = threading.Event()
         self.audio = MciAudio(self.bridge)
         self.config = {}
+        self.voice_dialogue = VoiceDialogue()
+        self.voice_last_turn = None
+        self.voice_cancel_requested = False
+        self.voice_dialog_open = False
+        self.voice_buffer = ''
+        self.voice_preview_editing = False
+        self.voice_needs_confirmation = False
+        self.voice_finishing = False
+        self.voice_review_requested = False
         self.media_library = MediaLibrary()
         self.background_music = None
         self.session_id = None
@@ -1401,10 +1389,14 @@ class Panel(QMainWindow):
         self.bridge.event.connect(self._on_event)
         self.bridge.audio_done.connect(self._on_audio_done)
         self.bridge.speech_done.connect(self._on_speech_done)
+        self.bridge.recognition_progress.connect(self._on_recognition_progress)
         self.bridge.audio_started.connect(self._on_audio_started)
         self.turn_timer = QTimer(self)
         self.turn_timer.setInterval(3000)
         self.turn_timer.timeout.connect(self.check_turn)
+        self.voice_resume_timer = QTimer(self)
+        self.voice_resume_timer.setSingleShot(True)
+        self.voice_resume_timer.timeout.connect(self._voice_rearm)
         self.reaction_prepare_timer = QTimer(self)
         self.reaction_prepare_timer.setInterval(1000)
         self.reaction_prepare_timer.timeout.connect(self._prepare_reaction_audio)
@@ -1655,7 +1647,7 @@ class Panel(QMainWindow):
         self._build_diag()
         self._build_interaction_help()
         self.help_escape = QShortcut(QKeySequence("Escape"), self)
-        self.help_escape.activated.connect(lambda: self.help_toggle.setChecked(False))
+        self.help_escape.activated.connect(self._escape_action)
         hardware = DraggableFrame()
         hardware.setObjectName("hardware")
         hardware.setFixedHeight(30)
@@ -1774,6 +1766,61 @@ class Panel(QMainWindow):
         attachment_layout.addWidget(self.remove_image)
         layout.addWidget(self.attachment_row)
         self.attachment_row.hide()
+        self.voice_bar = QFrame()
+        self.voice_bar.setSizePolicy(QSizePolicy.Policy.Expanding, QSizePolicy.Policy.Minimum)
+        voice_layout = QVBoxLayout(self.voice_bar)
+        voice_layout.setContentsMargins(6, 3, 6, 3)
+        voice_layout.setSpacing(3)
+        voice_row = QHBoxLayout()
+        voice_row.setSpacing(5)
+        self.voice_state = QLabel("语音对话")
+        self.voice_state.setWordWrap(True)
+        self.voice_state.setMinimumWidth(0)
+        self.voice_state.setAccessibleName("语音对话状态")
+        voice_row.addWidget(self.voice_state, 1)
+        self.voice_level = QProgressBar()
+        self.voice_level.setRange(0, 100)
+        self.voice_level.setValue(0)
+        self.voice_level.setTextVisible(False)
+        self.voice_level.setFixedSize(38, 9)
+        self.voice_level.setAccessibleName("麦克风输入音量")
+        self.voice_level.setToolTip("实时输入音量；说话时应有变化。它不代表识别准确率")
+        self.voice_level.setStyleSheet("QProgressBar { background:#291317; border:1px solid #654044; border-radius:3px; } QProgressBar::chunk { background:#bda566; border-radius:2px; }")
+        voice_row.addWidget(self.voice_level)
+        self.voice_end = QPushButton("结束")
+        self.voice_end.setAccessibleName("结束语音对话并关闭麦克风")
+        self.voice_end.clicked.connect(lambda: self.stop_voice_dialogue())
+        voice_row.addWidget(self.voice_end)
+        voice_layout.addLayout(voice_row)
+        self.voice_preview = QPlainTextEdit()
+        self.voice_preview.setObjectName("voicePreview")
+        self.voice_preview.setAccessibleName("实时识别文字，可修改后发送")
+        self.voice_preview.setPlaceholderText("识别文字会显示在这里；可修改后发送")
+        self.voice_preview.setFixedHeight(44)
+        self.voice_preview.setMinimumWidth(0)
+        self.voice_preview.textChanged.connect(self._on_voice_preview_edited)
+        voice_layout.addWidget(self.voice_preview)
+        voice_actions = QHBoxLayout()
+        voice_actions.setSpacing(5)
+        self.voice_done = QPushButton("我说完了，等待回答")
+        self.voice_done.setMinimumWidth(0)
+        self.voice_done.setAccessibleName("我说完了，结束本句识别并等待回答")
+        self.voice_done.setToolTip("完成当前一句的识别并发送；没有识别到文字时不会发送空消息")
+        self.voice_done.clicked.connect(self.finish_voice_phrase)
+        voice_actions.addWidget(self.voice_done, 1)
+        self.voice_review = QPushButton("文字备选")
+        self.voice_review.setAccessibleName("可选文字确认或重新说本句")
+        self.voice_review.setToolTip("按需查看和校对本句，默认仍直接语音对话；确认前也可重新说")
+        self.voice_review.clicked.connect(self.request_voice_review)
+        voice_actions.addWidget(self.voice_review)
+        self.voice_interrupt = QPushButton("打断")
+        self.voice_interrupt.setAccessibleName("打断朗读，继续语音对话")
+        self.voice_interrupt.setToolTip("停止本次朗读，再听你说话")
+        self.voice_interrupt.clicked.connect(self.interrupt_voice_reply)
+        voice_actions.addWidget(self.voice_interrupt)
+        voice_layout.addLayout(voice_actions)
+        layout.addWidget(self.voice_bar)
+        self.voice_bar.hide()
         input_frame = QFrame()
         input_frame.setObjectName("chatRow")
         row = QHBoxLayout(input_frame)
@@ -1783,8 +1830,9 @@ class Panel(QMainWindow):
         self.mic.setObjectName("iconButton")
         self.mic.setIcon(QIcon(str(Path(__file__).with_name("mic.svg"))))
         self.mic.setIconSize(QSize(16, 16))
-        self.mic.setToolTip("Windows 本机语音识别")
-        self.mic.setAccessibleName("语音输入")
+        self.mic.setToolTip("开始实时语音对话：直接说话，自动回答；也可点我说完了或选择文字备选")
+        self.mic.setAccessibleName("开始语音对话")
+        self.mic.setCheckable(True)
         self.mic.clicked.connect(self.start_mic)
         picture = QPushButton()
         picture.setObjectName("iconButton")
@@ -1799,6 +1847,7 @@ class Panel(QMainWindow):
         self.input.setMinimumWidth(0)
         self.input.returnPressed.connect(self.send)
         self.input.textEdited.connect(self._on_composing)
+        self.input.textChanged.connect(lambda: self._voice_schedule())
         self.send_button = QPushButton()
         self.send_button.setObjectName("iconButton")
         self.send_icon = QIcon(str(Path(__file__).with_name("send.svg")))
@@ -1868,6 +1917,20 @@ class Panel(QMainWindow):
         self.mic_on.clicked.connect(lambda on: self.patch({"speechInput": {
             "provider": "windows-native" if on else "none"}}))
         form.addRow("本机语音输入", self.mic_on)
+        self.speech_submit_mode = QComboBox()
+        self.speech_submit_mode.addItem("实时语音：直接对话", "auto")
+        self.speech_submit_mode.addItem("备选：文字确认后发送", "manual")
+        self.speech_submit_mode.setAccessibleName("语音发言结束方式")
+        self.speech_submit_mode.setToolTip("默认直接语音对话；按需选择文字确认。下一次开始语音对话时生效")
+        self.speech_submit_mode.activated.connect(lambda _: self.patch({"speechInput": {"submitMode": self.speech_submit_mode.currentData()}}))
+        form.addRow("发言结束方式", self.speech_submit_mode)
+        self.speech_sensitivity = QComboBox()
+        for title, value in (("灵敏", "high"), ("标准", "normal"), ("谨慎", "low")):
+            self.speech_sensitivity.addItem(title, value)
+        self.speech_sensitivity.setAccessibleName("语音识别灵敏度")
+        self.speech_sensitivity.setToolTip("下一次开始时生效。灵敏模式接受更多轻声或不确定的听写；不确定文字仍可手动确认，不修改 Windows 全局音量")
+        self.speech_sensitivity.activated.connect(lambda _: self.patch({"speechInput": {"sensitivity": self.speech_sensitivity.currentData()}}))
+        form.addRow("识别灵敏度", self.speech_sensitivity)
         self.oneshot_on = toggle("单句模式", "chat", "oneshot")
         self.memory_on = toggle("长期记忆", "memory", "enabled")
         self.extract_on = toggle("自动提取事实", "memory", "autoExtract")
@@ -2185,6 +2248,8 @@ class Panel(QMainWindow):
             self._finish_turn_wait()
             self.history.add_entry("system", "⚠ " + error)
             self.avatar.set_activity("error")
+            if self.voice_dialogue.active:
+                self.stop_voice_dialogue("回复连接失败，语音对话已停止；识别文字已保留")
         elif name == "assets":
             self.diag_text.setPlainText("模型加载失败：" + error)
 
@@ -2209,6 +2274,9 @@ class Panel(QMainWindow):
             return
         if name == "status":
             self.config = result.get("config") or {}
+            if self.voice_dialogue.active and (self.config.get("speechInput", {}).get("provider") == "none" or
+                                                not self.config.get("voice", {}).get("enabled")):
+                self.stop_voice_dialogue("语音开关已关闭，麦克风已关闭")
             self.character_content = result.get("characterContent") or {}
             self._configure_reaction_audio()
             if not self.migrated_input and self.config.get("speechInput", {}).get("provider") in ("browser", "api"):
@@ -2220,6 +2288,9 @@ class Panel(QMainWindow):
             self.extract_on.setChecked(self.config.get("memory", {}).get("autoExtract", False))
             self.oneshot_on.setChecked(self.config.get("chat", {}).get("oneshot", True))
             self.mic_on.setChecked(self.config.get("speechInput", {}).get("provider") != "none")
+            speech_settings = self.config.get("speechInput", {})
+            self.speech_submit_mode.setCurrentIndex(max(0, self.speech_submit_mode.findData(speech_settings.get("submitMode", "auto"))))
+            self.speech_sensitivity.setCurrentIndex(max(0, self.speech_sensitivity.findData(speech_settings.get("sensitivity", "high"))))
             self.broadcast_on.setChecked(self.config.get("broadcast", {}).get("enabled", False))
             self.task_start_on.setChecked(self.config.get("broadcast", {}).get("onTaskStart", False))
             self.task_complete_on.setChecked(self.config.get("broadcast", {}).get("onTaskComplete", False))
@@ -2254,7 +2325,7 @@ class Panel(QMainWindow):
             self.provider.setCurrentText(voice.get("provider", "edge"))
             provider = result.get("voice", {}).get("provider") or "—"
             memory = result.get("memory", {}).get("panel", {})
-            if not self.pending_turn:
+            if not self.pending_turn and not self.voice_dialogue.active:
                 self.status.setText(f"{provider} · 长期 {memory.get('durable', 0)} / 提要 {memory.get('recaps', 0)}")
             if not self.sessions_requested:
                 self.sessions_requested = True
@@ -2274,7 +2345,7 @@ class Panel(QMainWindow):
             # Startup discovery must never erase a message already submitted.
             if self.user_started_chat:
                 return
-            sessions = ([s for s in result.get("sessions", []) if not s.get("endedAt")]
+            sessions = ([s for s in result.get("sessions", []) if not s.get("endedAt") and s.get("mode") != "voice"]
                         if not self.config.get("chat", {}).get("oneshot", True) else [])
             if sessions:
                 self.session_id = sessions[0]["id"]
@@ -2289,11 +2360,22 @@ class Panel(QMainWindow):
             for item in result.get("messages", []):
                 self.add_message(item.get("role"), item.get("zh") or item.get("ja") or "")
         elif name == "chat":
+            if result.get("mode") == "voice":
+                expected = (self.pending_payload or {}).get("voiceRequestId")
+                if (not self.voice_dialogue.active or not self.pending_turn or
+                        result.get("voiceRequestId") != expected):
+                    self.call("voice_end", "/amadeus/chat/cancel", "POST", {"voiceSessionId": result["sessionId"]})
+                    if self.voice_cancel_requested and expected == result.get("voiceRequestId"):
+                        self._finish_turn_wait()
+                        self.status.setText("语音对话已结束，麦克风已关闭")
+                    return
             if not self.pending_turn:
                 self.call("cancel", "/amadeus/chat/cancel", "POST", {"turnId": result["turnId"]})
                 return
             self.turn_id = result["turnId"]
             self.session_id = result["sessionId"]
+            if result.get("mode") == "voice":
+                self.voice_dialogue.session_id = self.session_id
             if getattr(self, "cancel_requested", False):
                 self.call("cancel", "/amadeus/chat/cancel", "POST", {"turnId": self.turn_id})
             for kind, data in self.pending_events:
@@ -2443,6 +2525,13 @@ class Panel(QMainWindow):
             QTimer.singleShot(0, self._load_pending_model)
 
     def tab_changed(self, index):
+        if self.voice_dialogue.active:
+            if index != 0:
+                self.voice_dialogue.cancel_capture()
+                self._voice_mute(False)
+                self._voice_ui("已暂停聆听，返回对话页继续")
+            else:
+                self._voice_schedule()
         if index == 1:
             self.refresh_memory()
         elif index == 3:
@@ -2454,6 +2543,9 @@ class Panel(QMainWindow):
 
     def send(self):
         if self.pending_turn:
+            if self.voice_dialogue.active:
+                self.stop_voice_dialogue()
+                return
             self._stop_speech()
             self.cancel_requested = True
             self.status.setText("正在取消…")
@@ -2470,6 +2562,21 @@ class Panel(QMainWindow):
         self._hide_reaction_caption()
         self.avatar.set_activity("thinking")
         payload = {"sessionId": self.session_id, "text": text}
+        if self.voice_dialogue.active:
+            self.voice_dialogue.cancel_capture()
+            self._voice_mute(False)
+            self.voice_buffer = ''
+            self.voice_preview_editing = False
+            self.voice_needs_confirmation = False
+            self.voice_finishing = False
+            self.voice_review_requested = False
+            self._set_voice_preview(text)
+            self.voice_dialogue.submitted()
+            self._voice_ui("已识别并发送，正在等她回答…")
+            payload["sessionId"] = self.voice_dialogue.session_id
+            payload["mode"] = "voice"
+            payload["voiceRequestId"] = uuid.uuid4().hex
+            self.voice_dialogue.request_id = payload["voiceRequestId"]
         if self.attachment:
             payload["image"] = self.attachment
         self.add_message("user", text + (" [图片]" if self.attachment else ""))
@@ -2479,6 +2586,7 @@ class Panel(QMainWindow):
         self.pending_payload = payload
         self.pending_events.clear()
         self.cancel_requested = False
+        self.voice_cancel_requested = False
         self.turn_started_at = time.monotonic()
         self.turn_id = None
         self.send_button.setIcon(QIcon())
@@ -2500,6 +2608,8 @@ class Panel(QMainWindow):
             self.session_id = None
             self.add_message("system", "回复连接超时，请检查模型服务或网络后重试。")
             self.status.setText("回复连接超时")
+            if self.voice_dialogue.active:
+                self.stop_voice_dialogue("回复连接超时，语音对话已停止")
             self.avatar.set_activity("error")
             return
         if self.turn_id and not self.poll_inflight:
@@ -2519,7 +2629,16 @@ class Panel(QMainWindow):
         self.send_button.setAccessibleName("发送")
 
     def pick_image(self):
-        filename, _ = QFileDialog.getOpenFileName(self, "选择图片", "", "Images (*.png *.jpg *.jpeg *.webp)")
+        if self.voice_dialogue.active:
+            self.voice_dialogue.cancel_capture()
+            self._voice_mute(False)
+            self._voice_ui("选择图片时暂停聆听")
+        self.voice_dialog_open = True
+        try:
+            filename, _ = QFileDialog.getOpenFileName(self, "选择图片", "", "Images (*.png *.jpg *.jpeg *.webp)")
+        finally:
+            self.voice_dialog_open = False
+            self._voice_schedule()
         if not filename:
             return
         try:
@@ -2543,33 +2662,374 @@ class Panel(QMainWindow):
         self.attachment = None
         self.attachment_label.clear()
         self.attachment_row.hide()
+        self._voice_schedule()
 
     def start_mic(self):
+        if self.voice_dialogue.active:
+            self.stop_voice_dialogue()
+            return
+        self.mic.setChecked(False)
         if self.config.get("speechInput", {}).get("provider") == "none":
-            self.status.setText("语音输入已关闭")
+            self.status.setText("语音输入已关闭，请在设置中开启")
             return
-        if not self.mic.isEnabled():
+        voice = self.config.get("voice", {})
+        if not voice.get("enabled") or voice.get("provider") == "none":
+            self.status.setText("请先开启角色语音朗读，再开始语音对话")
             return
-        self.mic.setEnabled(False)
-        self.status.setText("正在听…")
-        if not self.pending_turn:
-            self.avatar.set_activity("listening")
-        language = self.config.get("speechInput", {}).get("lang") or "zh-CN"
-        threading.Thread(target=recognize_once, args=(self.bridge, language), daemon=True).start()
+        if self.pending_turn or self.call_item:
+            self.status.setText("请先结束当前回复或来电，再开始语音对话")
+            return
+        if self.input.text().strip() or self.attachment:
+            self.status.setText("请先发送或清空草稿及附件，再开始语音对话")
+            return
+        speech_settings = self.config.get("speechInput", {})
+        self.voice_dialogue.start(submit_mode=speech_settings.get("submitMode", "auto"),
+                                  sensitivity=speech_settings.get("sensitivity", "high"))
+        self.voice_buffer = ''
+        self.voice_preview_editing = False
+        self.voice_needs_confirmation = False
+        self.voice_finishing = False
+        self.voice_review_requested = False
+        self._set_voice_preview('')
+        self.voice_cancel_requested = False
+        self.voice_last_turn = None
+        self.session_id = None
+        self.user_started_chat = True
+        self.welcome_cancelled = True
+        self._stop_speech()
+        self.tabs.setCurrentIndex(0)
+        self.call("claim", "/amadeus/client/active", "POST", {})
+        self._voice_ui("准备聆听…")
+        self._voice_schedule(100)
 
-    def _on_speech_done(self, text, error):
-        self.mic.setEnabled(True)
-        self.avatar.set_activity("thinking" if self.pending_turn else "error" if error else "idle")
-        if error:
-            self.status.setText("语音输入：" + error[:70])
-        elif text:
-            self.input.setText(text)
-            self.status.setText("语音已输入，可编辑后发送")
+    def _voice_ui(self, message):
+        active = self.voice_dialogue.active
+        self.mic.setChecked(active)
+        self.mic.setAccessibleName("结束语音对话" if active else "开始语音对话")
+        self.mic.setToolTip("结束语音对话并关闭麦克风（Esc）" if active else
+                            "开始实时语音对话：直接说话，可选文字确认")
+        self.voice_bar.setVisible(active)
+        reviewing = (self.voice_dialogue.submit_mode == 'manual' or self.voice_review_requested or
+                     self.voice_needs_confirmation or self.voice_preview_editing)
+        mode = "校对" if reviewing else "语音"
+        self.voice_state.setText(mode + " · " + message if active else message)
+        self.voice_interrupt.setEnabled(active and self.audio_busy and not self.pending_turn)
+        busy = (self.pending_turn or self.voice_dialogue.waiting_reply or self.audio_busy or
+                bool(self.voice_dialogue.expected_audio - self.voice_dialogue.finished_audio))
+        capture = self.voice_dialogue.capture
+        self.voice_done.setEnabled(active and not busy and not self.voice_finishing and
+                                   (bool(self.voice_preview.toPlainText().strip()) or
+                                    (capture is not None and capture.ready and not capture.cancelled.is_set())))
+        self.voice_done.setText("正在完成识别…" if self.voice_finishing else "我说完了，等待回答")
+        self.voice_preview.setReadOnly(not active or busy or self.voice_finishing)
+        self.voice_preview.setVisible(active and not busy and reviewing)
+        self.voice_done.setVisible(active and not busy)
+        self.voice_review.setVisible(active and not busy)
+        self.voice_review.setEnabled(active and not busy and not self.voice_finishing)
+        self.voice_review.setText("重新说" if reviewing else "文字备选")
+        self.voice_interrupt.setVisible(active and self.audio_busy)
+        self.history.setMinimumHeight(0)
+        self.history.setSizePolicy(QSizePolicy.Policy.Expanding,
+                                   QSizePolicy.Policy.Ignored if active and not busy and reviewing else QSizePolicy.Policy.Expanding)
+        if active and not busy:
+            voice_layout = self.voice_bar.layout()
+            voice_layout.invalidate()
+            needed = max(voice_layout.minimumSize().height(), voice_layout.heightForWidth(self.voice_bar.width()))
+            self.voice_bar.setMinimumHeight(needed + 2)
         else:
-            self.status.setText("没有识别到语音")
+            self.voice_bar.setMinimumHeight(0)
+
+    def _set_voice_preview(self, text):
+        if self.voice_preview.toPlainText() != text:
+            with QSignalBlocker(self.voice_preview):
+                self.voice_preview.setPlainText(text)
+                self.voice_preview.moveCursor(QTextCursor.MoveOperation.End)
+                self.voice_preview.ensureCursorVisible()
+
+    def _on_voice_preview_edited(self):
+        if not self.voice_dialogue.active:
+            return
+        self.voice_dialogue.cancel_capture()
+        self._voice_mute(False)
+        self.voice_resume_timer.stop()
+        self.voice_buffer = self.voice_preview.toPlainText().strip()
+        self.voice_preview_editing = bool(self.voice_buffer)
+        self.voice_needs_confirmation = bool(self.voice_buffer)
+        self.voice_finishing = False
+        if len(self.voice_buffer) > 2000:
+            self._voice_ui("文字超过 2000 字，请删减后发送")
+            self.voice_done.setEnabled(False)
+        elif self.voice_buffer:
+            self._voice_ui("文字已修改，确认后发送")
+        else:
+            self._voice_ui("文字已清空，准备继续聆听…")
+            self._voice_schedule()
+
+    def request_voice_review(self):
+        if (not self.voice_dialogue.active or self.pending_turn or self.audio_busy or
+                self.voice_dialogue.waiting_reply or self.voice_finishing):
+            return
+        if (self.voice_review_requested or self.voice_needs_confirmation or self.voice_preview_editing or
+                self.voice_dialogue.submit_mode == 'manual'):
+            self.voice_dialogue.cancel_capture()
+            self.voice_dialogue.generation += 1
+            self.voice_buffer = ''
+            self.voice_preview_editing = False
+            self.voice_needs_confirmation = False
+            self.voice_review_requested = False
+            self._set_voice_preview('')
+            self._voice_ui("准备重新听你说…")
+            self._voice_schedule()
+        else:
+            self.voice_review_requested = True
+            self._voice_ui("本句可校对，再点我说完了")
+
+    def _on_recognition_progress(self, job, update):
+        if (not self.voice_dialogue.active or job is not self.voice_dialogue.capture or
+                job.generation != self.voice_dialogue.generation or job.cancelled.is_set()):
+            return
+        kind = update.get('kind')
+        if kind == 'level':
+            self.voice_level.setValue(max(0, min(100, int(update.get('level', 0)))))
+            return
+        if 'text' in update and not self.voice_preview_editing:
+            self._set_voice_preview(str(update['text']))
+        if kind == 'ready':
+            job.ready = True
+        if kind == 'finishing' or job.finish_requested.is_set():
+            self.voice_finishing = True
+            self._voice_ui("正在完成这一句的识别…")
+        elif kind == 'ready':
+            self._voice_ui("麦克风已就绪，请说话")
+            self.status.setText("语音对话 · 正在聆听（Esc 结束）")
+        elif kind == 'speech':
+            self._voice_ui("听到说话，正在识别…")
+        elif kind == 'hypothesis':
+            self._voice_ui("正在识别，文字可能变化")
+        elif kind == 'unconfirmed' or update.get('uncertain'):
+            self._voice_ui("识别不确定，请核对文字")
+        elif kind == 'recognized':
+            suffix = "可继续说" if job.submit_mode == 'manual' else "正在断句"
+            self._voice_ui(f"已识别 {len(self.voice_preview.toPlainText())} 字，{suffix}")
+
+    def finish_voice_phrase(self):
+        if (not self.voice_dialogue.active or self.pending_turn or self.voice_dialogue.waiting_reply or
+                self.audio_busy or self.voice_finishing or
+                self.voice_dialogue.expected_audio - self.voice_dialogue.finished_audio):
+            return
+        job = self.voice_dialogue.capture
+        text = self.voice_preview.toPlainText().strip()
+        if job is not None and not job.cancelled.is_set():
+            if not job.ready:
+                self._voice_ui("麦克风还在准备，请等就绪后说话")
+                return
+            self.voice_finishing = True
+            self.voice_resume_timer.stop()
+            job.finish()
+            self._voice_ui("正在完成这一句的识别…")
+            return
+        if text:
+            self._submit_voice_text(text)
+        else:
+            self.voice_needs_confirmation = False
+            self.voice_preview_editing = False
+            self._voice_ui("没识别出文字，未发送，请再说")
+            self._voice_schedule(150)
+
+    def _voice_mute(self, listening):
+        if self.background_music:
+            self.background_music.listening = listening
+            self.background_music.update_volume()
+
+    def _voice_schedule(self, delay=350):
+        timer = getattr(self, "voice_resume_timer", None)
+        if timer and self.voice_dialogue.active and not self.stop_event.is_set():
+            timer.start(delay)
+
+    def _voice_rearm(self):
+        voice = self.voice_dialogue
+        if not voice.active or self.stop_event.is_set():
+            return
+        if self.tabs.currentIndex() != 0 or self.voice_dialog_open:
+            return
+        if self.config.get("speechInput", {}).get("provider") == "none" or not self.config.get("voice", {}).get("enabled"):
+            self.stop_voice_dialogue("语音开关已关闭，语音对话已停止")
+            return
+        if voice.capture:
+            if voice.capture.cancelled.is_set():
+                self._voice_ui("正在释放麦克风…")
+                self._voice_schedule(150)
+            return
+        if self.pending_turn or voice.waiting_reply:
+            self._voice_ui("已识别并发送，正在等她回答…")
+            return
+        if self.audio_busy or self.audio_queue or voice.expected_audio - voice.finished_audio:
+            self._voice_ui("正在准备或播放回复…")
+            self._voice_schedule(250)
+            return
+        if self.input.text().strip() or self.attachment:
+            self._voice_ui("已暂停，发送或清空草稿后继续")
+            return
+        if self.voice_needs_confirmation or self.voice_preview_editing:
+            self._voice_ui("文字待确认，点我说完了")
+            return
+        if self.call_item:
+            self.stop_voice_dialogue("来电时已暂停语音对话")
+            return
+        job = voice.begin_capture(self.voice_buffer)
+        if job is None:
+            return
+        self._voice_mute(True)
+        self.voice_finishing = False
+        self.voice_level.setValue(0)
+        self._set_voice_preview(self.voice_buffer)
+        self._voice_ui("正在打开麦克风，请稍等…")
+        self.status.setText("语音对话 · 麦克风准备中")
+        self.typing_timer.stop()
+        self.avatar.set_activity("listening")
+        language = self.config.get("speechInput", {}).get("lang") or "zh-CN"
+        threading.Thread(target=recognize, args=(self.bridge, job, language), name="voice-recognition", daemon=True).start()
+
+    def _on_speech_done(self, job, text, error):
+        if job is not self.voice_dialogue.capture:
+            return
+        valid = self.voice_dialogue.finish_capture(job)
+        self._voice_mute(False)
+        self.voice_level.setValue(0)
+        if not valid:
+            if (self.voice_dialogue.active and job.generation == self.voice_dialogue.generation and
+                    not self.voice_preview_editing and not self.voice_dialogue.waiting_reply):
+                self.voice_buffer = job.text()
+                if self.voice_buffer and self.voice_dialogue.submit_mode == 'auto':
+                    self.voice_needs_confirmation = True
+            self._voice_schedule()
+            return
+        was_finishing = self.voice_finishing or job.finish_requested.is_set()
+        self.voice_finishing = False
+        if error:
+            candidate = job.text(partial=True) or self.voice_preview.toPlainText().strip()
+            if candidate:
+                self._set_voice_preview(candidate)
+                self.voice_needs_confirmation = True
+            self.stop_voice_dialogue("语音识别失败：" + str(error)[:90])
+            return
+        text = str(text or "").strip()
+        candidate = job.text(partial=True) or self.voice_preview.toPlainText().strip()
+        if text:
+            self._set_voice_preview(text)
+        if was_finishing:
+            if text:
+                self._submit_voice_text(text)
+                return
+            if candidate:
+                self._set_voice_preview(candidate)
+                self.voice_needs_confirmation = True
+                self._voice_ui("识别未完整，请核对后发送")
+                return
+        elif job.requires_confirmation or (not text and candidate):
+            self._set_voice_preview(text or candidate)
+            self.voice_buffer = text
+            self.voice_needs_confirmation = True
+            self._voice_ui("文字未发送，请核对后确认")
+            return
+        elif text and job.submit_mode == 'auto' and not self.voice_review_requested:
+            self._submit_voice_text(text)
+            return
+        elif text and job.submit_mode == 'auto' and self.voice_review_requested:
+            self.voice_buffer = text
+            self.voice_needs_confirmation = True
+            self._voice_ui("本句文字待确认，也可重新说")
+            return
+        elif text and job.submit_mode == 'manual':
+            self.voice_buffer = text
+            if job.fragments or text != job.prefix:
+                self.voice_dialogue.empty_count = 0
+            else:
+                self.voice_dialogue.empty_count += 1
+            if job.timed_out or self.voice_dialogue.empty_count >= 10:
+                self.voice_needs_confirmation = True
+                self._voice_ui("已暂停聆听，文字保留；点我说完了发送")
+            else:
+                self._voice_ui("已识别，等待手动发送")
+                self._voice_schedule(200)
+            return
+        if not text:
+            self.voice_dialogue.empty_count += 1
+            if self.voice_dialogue.empty_count >= 10:
+                self.stop_voice_dialogue("一段时间未听到说话，麦克风已关闭；点击可继续聊")
+            else:
+                self._voice_ui("没识别出文字，请再说一次" if job.max_audio_level or job.speech_detected else
+                               "未收到有效声音，请检查麦克风")
+                self._voice_schedule(500)
+            return
+
+    def _submit_voice_text(self, text):
+        text = str(text or '').strip()
+        if not text or not self.voice_dialogue.active:
+            return
+        if re.sub(r"[\s，。！？、,.!?]", "", text) in {"结束对话", "结束语音对话", "停止语音对话", "结束通话", "先不聊了"}:
+            self.stop_voice_dialogue()
+            return
+        if len(text) > 2000:
+            self.stop_voice_dialogue("这句话较长，请分句说；本次没有发送")
+            return
+        if self.pending_turn or self.input.text().strip() or self.attachment or self.tabs.currentIndex() != 0:
+            self._voice_ui("已暂停聆听，保留当前草稿")
+            return
+        self.input.setText(text)
+        self.send()
+
+    def interrupt_voice_reply(self):
+        if not self.voice_dialogue.active or self.pending_turn:
+            return
+        if self.voice_last_turn:
+            self.voice_dialogue.ignored_turns.add(self.voice_last_turn)
+        self.voice_dialogue.expected_audio.clear()
+        self._stop_speech()
+        self._voice_ui("已打断，准备听你说…")
+        self._voice_schedule()
+
+    def stop_voice_dialogue(self, message="语音对话已结束，麦克风已关闭"):
+        voice = self.voice_dialogue
+        if not voice.active and not voice.capture:
+            return
+        was_active = voice.active
+        unsent = bool(voice.capture or self.voice_buffer or self.voice_needs_confirmation or self.voice_preview_editing)
+        draft = self.voice_preview.toPlainText().strip()
+        if was_active and unsent and draft and not self.input.text().strip():
+            self.input.setText(draft)
+        session = voice.stop()
+        self.voice_resume_timer.stop()
+        self._voice_mute(False)
+        self.voice_level.setValue(0)
+        self.voice_finishing = False
+        self.voice_needs_confirmation = False
+        self.voice_preview_editing = False
+        self.voice_buffer = ''
+        self.voice_review_requested = False
+        if was_active:
+            self._stop_speech()
+            if self.pending_turn and (self.pending_payload or {}).get("mode") == "voice":
+                self.cancel_requested = True
+                self.voice_cancel_requested = True
+            if session:
+                self.call("voice_end", "/amadeus/chat/cancel", "POST", {"voiceSessionId": session})
+            elif self.pending_turn and self.turn_id:
+                self.call("cancel", "/amadeus/chat/cancel", "POST", {"turnId": self.turn_id})
+            self.session_id = None
+            self.avatar.set_activity("idle")
+            self.status.setText(message)
+        self._voice_ui(message)
+
+    def _escape_action(self):
+        self.help_toggle.setChecked(False)
+        if self.voice_dialogue.active:
+            self.stop_voice_dialogue()
 
     def _on_event(self, kind, data):
         if kind == "offline":
+            if self.voice_dialogue.active:
+                self.stop_voice_dialogue("连接中断，麦克风已关闭；连接恢复后可重新开始")
             self.status.setText("连接中断，重连中…")
         elif kind == "connected":
             self.status.setText("已连接")
@@ -2585,6 +3045,9 @@ class Panel(QMainWindow):
         elif kind == "config":
             if data.get("config"):
                 self.config = data["config"]
+                if self.voice_dialogue.active and (self.config.get("speechInput", {}).get("provider") == "none" or
+                                                    not self.config.get("voice", {}).get("enabled")):
+                    self.stop_voice_dialogue("语音开关已关闭，麦克风已关闭")
                 self._configure_reaction_audio()
             if data.get("config", {}).get("voice", {}).get("enabled") is False:
                 self._stop_speech()
@@ -2598,11 +3061,17 @@ class Panel(QMainWindow):
             self.status.setText("模型安装：" + phases.get(data.get("phase"), "下载中"))
         elif kind == "degraded":
             self.status.setText("语音队列已跳过未完成的播放，可重试")
+            if self.voice_dialogue.active and (data.get("id") is None or data.get("id") in self.voice_dialogue.expected_audio):
+                self.stop_voice_dialogue("回复语音未能完整播放，语音对话已停止，可重试")
         elif kind == "cleared":
+            if self.voice_dialogue.active:
+                self.stop_voice_dialogue()
             self._stop_speech()
             if self.call_item:
                 self.deny_call()
         elif kind == "audio-owner" and data.get("owner") != self.api.client:
+            if self.voice_dialogue.active:
+                self.stop_voice_dialogue("音频切换到其他窗口，麦克风已关闭")
             self._stop_speech()
             if self.call_item:
                 self.deny_call()
@@ -2620,23 +3089,38 @@ class Panel(QMainWindow):
             if data.get("turnId") != self.turn_id:
                 return
             self._finish_turn_wait()
+            if self.voice_cancel_requested and not self.voice_dialogue.active:
+                self.status.setText("语音对话已结束，麦克风已关闭")
+                return
             if kind == "turn:done":
                 self.add_message("assistant", data.get("zh") or data.get("ja") or "")
                 self.avatar.emotion(data.get("emotion", "neutral"))
                 if data.get("closed"):
                     self.session_id = None
                 self.status.setText("已回复 · 单句会话已结束" if data.get("closed") else "已回复")
+                if self.voice_dialogue.active:
+                    self.voice_last_turn = data["turnId"]
+                    self.voice_dialogue.replied(data.get("speechIds") or [])
+                    if not data.get("speechIds"):
+                        self.stop_voice_dialogue("本次回复没有可播放的语音，请检查语音服务后再试")
+                    else:
+                        self._voice_ui("正在准备或播放回复…")
+                        self._voice_schedule()
             else:
                 self.add_message("system", "回复失败：" + data.get("error", "未知错误"))
                 self.avatar.set_activity("error")
                 if data.get("closed"):
                     self.session_id = None
                 self.status.setText("回复失败")
+                if self.voice_dialogue.active:
+                    self.stop_voice_dialogue("回复失败，语音对话已停止，可重试")
         elif kind == "session:append":
             if data.get("sessionId") == self.session_id and data.get("origin") != self.api.client:
                 message = data.get("message") or {}
                 self.add_message(message.get("role"), message.get("zh") or message.get("ja") or "")
         elif kind == "shutdown":
+            if self.voice_dialogue.active:
+                self.stop_voice_dialogue("服务已停止，麦克风已关闭")
             self.status.setText("服务已停止")
 
     def _utterance(self, item):
@@ -2649,10 +3133,20 @@ class Panel(QMainWindow):
         if len(self.seen_utterances) > 500:
             self.seen_utterances = set(list(self.seen_utterances)[-250:])
         self.call("audio_accept", "/amadeus/utterance/ack", "POST", {"id": item_id, "status": "accepted"})
+        if item.get("mode") == "voice":
+            voice = self.voice_dialogue
+            if (not voice.active or item.get("targetClient") != self.api.client or
+                    item.get("voiceRequestId") != voice.request_id or voice.request_id is None or
+                    item.get("replyTo") in voice.ignored_turns or
+                    (voice.session_id is not None and item.get("sessionId") != voice.session_id)):
+                return
+            voice.session_id = item.get("sessionId")
         if self._old_task_announcement(item):
             return
         self._stop_tap_audio()
         if item.get("kind") == "call":
+            if self.voice_dialogue.active:
+                self.stop_voice_dialogue("有来电，语音对话已停止，麦克风已关闭")
             self._stop_speech()
             self.welcome_cancelled = True
             self.call_item = item
@@ -2739,13 +3233,22 @@ class Panel(QMainWindow):
         threading.Thread(target=prepare, name="speech-prefetch", daemon=True).start()
 
     def _next_audio(self):
+        # Hold ordinary speech while CONNECT is visible. It must not occupy
+        # playback ahead of the greeting that the user is about to accept.
+        if self.call_item is not None:
+            return
         while self.audio_queue and self._old_task_announcement(self.audio_queue[0]):
             self.audio_queue.pop(0)
         if not self.audio_queue:
             self.audio_busy = False
             self.active_audio_item = None
             self._set_talking(False)
+            self._voice_schedule()
             return
+        if self.voice_dialogue.active:
+            self.voice_dialogue.cancel_capture()
+            self._voice_mute(False)
+            self._voice_ui("正在准备或播放回复…")
         queued_item = self.audio_queue.pop(0)
         prefetch = self.speech_prefetch
         if not (prefetch and prefetch["valid"] and prefetch["item"] is queued_item and
@@ -2795,7 +3298,14 @@ class Panel(QMainWindow):
                 self.audio.play("voice", audio, suffix, item=item, cancel_event=cancel_event, start_ms=start_ms)
             except Exception as error:
                 self.bridge.audio_done.emit(item, str(error))
-        self.pool.submit(work)
+        if item.get("_call_opening"):
+            # Cancelled HTTP/synthesis requests can still occupy the shared
+            # control pool until their network timeout. A newly accepted call
+            # cannot wait behind those workers; generation checks still stop
+            # its result from playing after decline, clear or a newer call.
+            threading.Thread(target=work, name="call-greeting", daemon=True).start()
+        else:
+            self.pool.submit(work)
 
     @staticmethod
     def _old_task_announcement(item):
@@ -2821,11 +3331,21 @@ class Panel(QMainWindow):
             self._invalidate_speech_prefetch()
         self._set_talking(False)
         if error:
-            self.status.setText("语音播放失败：" + str(error)[:58])
+            failure = ("来电开场白播放失败：" if item.get("_call_opening") else "语音播放失败：") + str(error)[:58]
+            self.status.setText(failure)
+            if item.get("_call_opening"):
+                self.add_message("system", failure)
             self.call("audio_report", "/amadeus/report", "POST", {
                 "level": "warn", "message": "native speech playback failed",
                 "detail": str(error)[:500], "where": "native audio",
             })
+            if self.voice_dialogue.active:
+                self.stop_voice_dialogue("回复语音播放失败，语音对话已停止，可重试")
+                return
+        if item.get("mode") == "voice" and self.voice_dialogue.active:
+            self.voice_dialogue.finished_audio.add(item.get("id"))
+        if item.get("_call_opening") and not error:
+            self.status.setText("已接通，可以回复")
         self._next_audio()
         if self.pending_turn and not self.audio_busy:
             self.avatar.set_activity("thinking")
@@ -2842,6 +3362,10 @@ class Panel(QMainWindow):
             if self.speech_prefetch is item.get("_speech_prefetch"):
                 self.speech_prefetch = None
             self.avatar.begin_utterance(item.get("emotion", "neutral"))
+            if item.get("_call_opening"):
+                self.status.setText("正在播放开场白…")
+            if self.voice_dialogue.active:
+                self._voice_ui("她正在回答 · 说完会继续聆听")
             if self.background_music:
                 self.background_music.speaking = True
                 self.background_music.update_volume()
@@ -2866,6 +3390,8 @@ class Panel(QMainWindow):
     def _configure_reaction_audio(self):
         signature = self._speech_voice_identity()
         if self.speech_voice_signature is not None and signature != self.speech_voice_signature:
+            if self.voice_dialogue.active:
+                self.stop_voice_dialogue("语音配置已变更，麦克风已关闭，可重新开始对话")
             self._stop_speech()
         self.speech_voice_signature = signature
         if self.reaction_audio.configure(self.config.get("voice", {}),
@@ -2904,21 +3430,30 @@ class Panel(QMainWindow):
         threading.Thread(target=work, name="reaction-prepare", daemon=True).start()
 
     def clear_audio(self):
+        if self.voice_dialogue.active:
+            self.stop_voice_dialogue()
         self._stop_speech()
         if self.call_item:
             self.deny_call()
         self.call("clear_audio", "/amadeus/action", "POST", {"cmd": "clear"})
 
     def accept_call(self):
+        if self.call_item is None:
+            return
+        item = {**self.call_item, "_call_opening": True}
+        deferred = list(self.audio_queue)
+        self.call_item = None
         self.ring_cancel.set()
         self.ring_ticket += 1
         self.audio.stop("ring")
+        self._stop_speech()
         self._set_call_mode(False)
-        if self.call_item:
-            self.audio_queue.append(self.call_item)
-            self.call_item = None
-            if not self.audio_busy:
-                self._next_audio()
+        self.user_started_chat = True
+        self.tabs.setCurrentIndex(0)
+        self.add_message("assistant", item.get("cn") or item.get("text") or "")
+        self.status.setText("正在准备开场白…")
+        self.audio_queue.extend([item, *deferred])
+        self._next_audio()
 
     def _pick_tap_line(self, gesture):
         """Draw a random unused line for this gesture; newly warmed lines join in.
@@ -3010,12 +3545,16 @@ class Panel(QMainWindow):
         self.caption_area.setFixedHeight(min(62, height))
 
     def _on_composing(self, text):
+        if self.voice_dialogue.active:
+            self.voice_dialogue.cancel_capture()
+            self._voice_mute(False)
+            self._voice_schedule()
         if not self.pending_turn and not self.audio_busy:
             self.avatar.set_activity("listening" if text else "idle")
             self.typing_timer.start(4000)
 
     def _finish_composing(self):
-        if not self.pending_turn and self.mic.isEnabled():
+        if not self.pending_turn and self.mic.isEnabled() and not self.voice_dialogue.active:
             self.avatar.set_activity("idle")
 
     def deny_call(self):
@@ -3024,6 +3563,8 @@ class Panel(QMainWindow):
         self.audio.stop("ring")
         self.call_item = None
         self._set_call_mode(False)
+        if not self.audio_busy and not self.stop_event.is_set():
+            self._next_audio()
 
     def patch(self, value):
         self.call("config", "/amadeus/config", "PATCH", {"patch": value})
@@ -3058,6 +3599,7 @@ class Panel(QMainWindow):
         self.call("claim", "/amadeus/client/active", "POST", {})
 
     def closeEvent(self, event):
+        self.stop_voice_dialogue()
         if self.background_music:
             self.background_music.stop()
         self.stop_event.set()

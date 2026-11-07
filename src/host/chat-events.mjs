@@ -20,6 +20,27 @@ export function wireChatEvents({ chat, hub, config, memory, log }) {
     log?.warn?.('[chat] turn failed:', evt.error)
   })
   chat.on('turn:done', (evt) => {
+    const voice = evt.mode === 'voice'
+    const lines = []
+    const local = config.getPath('voice.provider') === 'qwen-local'
+    if (config.getPath('voice.enabled') === true) {
+      for (const segment of evt.segments || []) {
+        for (const text of local ? splitLocalSpeech(segment.text) : [segment.text]) {
+          lines.push({ text, emotion: segment.emotion,
+            expr: EMOTION_EXPR[segment.emotion] || '', kind: 'say',
+            ...(voice ? { targetClient: evt.origin, replyTo: evt.turnId, sessionId: evt.sessionId,
+              voiceRequestId: evt.voiceRequestId } : {}) })
+        }
+      }
+    }
+    // Voice replies expose their actual queued IDs, including poll recovery.
+    // The native mic waits for these clips, not a timer guessed from text length.
+    const speech = voice ? hub.enqueueUtterances(lines) : []
+    const speechIds = speech.map(item => item.id)
+    if (voice) {
+      const turn = chat.getTurn?.(evt.turnId)
+      if (turn) turn.speechIds = speechIds
+    }
     sendToOrigin(evt.origin, 'turn:done', {
       turnId: evt.turnId,
       sessionId: evt.sessionId,
@@ -27,16 +48,9 @@ export function wireChatEvents({ chat, hub, config, memory, log }) {
       ja: evt.ja,
       emotion: evt.emotion,
       closed: evt.closed,
+      ...(voice ? { mode: 'voice', speechIds } : {}),
     })
-    if (config.getPath('voice.enabled') !== true) return
-    const lines = []
-    const local = config.getPath('voice.provider') === 'qwen-local'
-    for (const segment of evt.segments || []) {
-      for (const text of local ? splitLocalSpeech(segment.text) : [segment.text]) {
-        lines.push({ text, emotion: segment.emotion,
-          expr: EMOTION_EXPR[segment.emotion] || '', kind: 'say' })
-      }
-    }
+    if (voice || !lines.length) return
     if (hub.enqueueUtterances) hub.enqueueUtterances(lines)
     else for (const line of lines) hub.enqueueUtterance(line)
   })

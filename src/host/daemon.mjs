@@ -159,7 +159,7 @@ export function createDaemon(deps) {
       sendJson(res, 200, { ok: true, config: maskConfig(next), rejected })
     }),
 
-    ...createChatRoutes({ guard, readBody, sendJson, sessions, chat, config, proactive, clientIdOf }),
+    ...createChatRoutes({ guard, readBody, sendJson, sessions, chat, config, proactive, clientIdOf, hub }),
 
     'POST /amadeus/say': guard(async (req, res) => {
       const body = await readBody(req)

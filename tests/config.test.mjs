@@ -45,6 +45,26 @@ test('local Qwen voice settings are accepted', () => {
   assert.equal(config.voice.localModel, 'Qwen/Qwen3-TTS-12Hz-0.6B-Base')
 })
 
+test('voice confirmation and sensitivity are validated independently of the speaker', () => {
+  const original = { voice: { name: 'unchanged-test-clone' }, speechInput: { submitMode: 'manual', sensitivity: 'high' } }
+  const good = applyPatch(original, { speechInput: { submitMode: 'auto', sensitivity: 'normal' } })
+  assert.deepEqual(good.rejected, [])
+  assert.equal(good.config.speechInput.submitMode, 'auto')
+  assert.equal(good.config.voice.name, original.voice.name)
+  const invalid = applyPatch(original, { speechInput: { submitMode: 'upload', sensitivity: 999 } })
+  assert.deepEqual(invalid.rejected.sort(), ['speechInput.sensitivity', 'speechInput.submitMode'])
+  assert.equal(invalid.config.speechInput.submitMode, 'manual')
+})
+
+test('fresh configuration keeps direct voice as the default with optional text review', () => {
+  const paths = tempPaths()
+  try {
+    const store = new ConfigStore(paths)
+    assert.equal(store.getPath('speechInput.submitMode'), 'auto')
+    assert.equal(store.getPath('speechInput.sensitivity'), 'high')
+  } finally { cleanup(paths) }
+})
+
 test('config persists and merges with defaults', () => {
   const paths = tempPaths()
   try {

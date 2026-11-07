@@ -41,6 +41,7 @@ export class SessionStore {
         createdAt: s.createdAt,
         updatedAt: s.updatedAt,
         endedAt: s.endedAt ?? null,
+        mode: s.mode || 'chat',
         workspace: s.workspace ?? null,
         messageCount: (s.messages || []).length,
         hasSummary: typeof s.summary === 'string' && s.summary.length > 0,
@@ -48,7 +49,7 @@ export class SessionStore {
       .sort((a, b) => b.updatedAt - a.updatedAt)
   }
 
-  create({ name, workspace = null, greeting = null } = {}) {
+  create({ name, workspace = null, greeting = null, mode = 'chat', owner = null } = {}) {
     const sessions = this.list()
     const session = {
       id: newId(),
@@ -56,6 +57,7 @@ export class SessionStore {
       createdAt: Date.now(),
       updatedAt: Date.now(),
       workspace,
+      ...(mode === 'voice' ? { mode, owner } : {}),
       summary: '',
       messages: greeting
         ? [{ id: newId(), role: 'assistant', zh: greeting, ja: greeting, emotion: 'neutral', ts: Date.now() }]
@@ -73,7 +75,7 @@ export class SessionStore {
     const all = this.list()
     // A closed session is history, not context: one-shot mode closes the thread
     // after every exchange, so the next message starts a clean one.
-    const open = all.find((s) => !s.endedAt)
+    const open = all.find((s) => !s.endedAt && s.mode !== 'voice')
     if (open) return this.get(open.id)
     return this.create()
   }
